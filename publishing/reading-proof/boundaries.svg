@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 214" role="img" aria-labelledby="title desc">
+<title id="title">同一组 RNA，两种细胞边界</title><desc id="desc">点的位置不变。十字在方案 A 的绿色细胞之外，在方案 B 的绿色细胞之内。</desc>
+<defs>
+ <pattern id="grid" width="14" height="14" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".7" fill="#b5c0b5"/></pattern>
+ <g id="points" fill="#455d54"><circle cx="41" cy="53" r="3"/><circle cx="64" cy="31" r="2.7"/><circle cx="60" cy="75" r="2.5"/><circle cx="80" cy="50" r="3.2"/><circle cx="83" cy="85" r="2.7"/><circle cx="103" cy="35" r="2.8"/><circle cx="102" cy="65" r="2.8"/><circle cx="116" cy="89" r="3"/><circle cx="139" cy="24" r="2.5"/><circle cx="163" cy="49" r="2.7"/><circle cx="172" cy="80" r="3"/><circle cx="190" cy="37" r="3"/><circle cx="200" cy="66" r="2.8"/></g>
+ <g id="cross" stroke="#3b2821" stroke-linecap="round" stroke-width="2.8"><circle cx="135" cy="59" r="10.5" fill="#fffaf0" stroke="#87593e" stroke-width="1"/><path d="M131 55l8 8m0-8-8 8"/></g>
+ <path id="full" d="M129 14C153 3 188 12 205 33S219 80 204 94 158 108 130 98C95 112 49 106 31 85S19 40 37 25 95 6 129 14Z"/>
+ <g id="base"><use href="#full" fill="#ecdfce" stroke="#a4876e" stroke-width="1.6"/></g>
+</defs>
+<rect width="640" height="214" rx="3" fill="#f1f0e7"/><rect width="640" height="214" rx="3" fill="url(#grid)"/><path d="M320 20v174" stroke="#c2c7bb"/>
+<g font-family="sans-serif" font-size="14" fill="#344f45"><text x="24" y="31">A　边界向内</text><text x="345" y="31">B　边界向外</text></g>
+<g transform="translate(19 45) scale(1.18)"><use href="#base"/><path d="M129 14C117 37 116 67 130 98C95 112 49 106 31 85S19 40 37 25 95 6 129 14Z" fill="#c0d6c7" stroke="#4e7968" stroke-width="1.9"/><use href="#points"/><use href="#cross"/></g>
+<g transform="translate(339 45) scale(1.18)"><use href="#base"/><path d="M129 14C150 36 156 70 130 98C95 112 49 106 31 85S19 40 37 25 95 6 129 14Z" fill="#c0d6c7" stroke="#4e7968" stroke-width="1.9"/><use href="#points"/><use href="#cross"/></g>
+<g font-family="sans-serif" font-size="13" fill="#475650"><text x="24" y="192">×　不在绿色细胞内</text><text x="345" y="192">×　归入绿色细胞</text></g>
+</svg>

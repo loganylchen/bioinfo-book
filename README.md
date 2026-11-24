@@ -4,6 +4,8 @@
 
 这是独立的 Quarto Book 仓库。`chapters/` 包含入选章节的完整 Markdown（`.qmd`）和正文引用的图片，`_quarto.yml` 是书的目录。只克隆本仓库，用 Quarto 1.8.27 执行 `quarto render` 即可在 `_book/` 生成带搜索、上一章／下一章、图版的网页和 EPUB。无需访问原始笔记库。
 
+[第 14 章排版对照页](https://loganylchen.github.io/bioinfo-book/preview/spatial-segmentation/)由 `python3 publishing/reading-proof/build.py` 在整书构建后生成，不进入正式目录、站内搜索或 EPUB。
+
 ## 更新与选稿
 
 - 每天香港时间 **07:17** 定时检查（GitHub 调度可能延后）。只取 `Statistics/` 和 `References/公众号解读/`；`Daily/`、`Projects/` 和其他目录均不作为内容或附件来源。没有出版变化就不产生提交。可在 Actions 手动运行 **Build and publish book**。

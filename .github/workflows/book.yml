@@ -74,6 +74,7 @@ jobs:
         with:
           version: 1.8.27
       - run: quarto render
+      - run: python3 publishing/reading-proof/build.py
       - run: python3 publishing/check.py
       - uses: actions/upload-pages-artifact@v3
         with:
