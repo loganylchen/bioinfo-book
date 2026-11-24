@@ -1,6 +1,7 @@
 project:
   type: book
   output-dir: _book
+  post-render: publishing/reader.py
 lang: zh
 book:
   title: 生物信息学手记
@@ -28,3 +29,4 @@ format:
     code-overflow: wrap
   epub:
     toc-depth: 2
+    css: publishing/epub.css

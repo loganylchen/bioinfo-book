@@ -73,8 +73,13 @@ jobs:
       - uses: quarto-dev/quarto-actions/setup@v2
         with:
           version: 1.8.27
+      - name: Prepare typesetting tools
+        run: |
+          python3 -m venv "$RUNNER_TEMP/reader-env"
+          "$RUNNER_TEMP/reader-env/bin/pip" install lxml==6.0.2
+          echo "$RUNNER_TEMP/reader-env/bin" >> "$GITHUB_PATH"
+          echo "QUARTO_PYTHON=$RUNNER_TEMP/reader-env/bin/python" >> "$GITHUB_ENV"
       - run: quarto render
-      - run: python3 publishing/reading-proof/build.py
       - run: python3 publishing/check.py
       - uses: actions/upload-pages-artifact@v3
         with:

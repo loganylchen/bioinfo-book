@@ -150,6 +150,8 @@ def export(vault, destination):
                 title = '项目运行记录模板'
             if slug=='delong':
                 title = 'DeLong 检验：比较相关 ROC 曲线的 AUC'
+            if slug=='spatial-segmentation':
+                body = re.sub(r'(?m)^(做空间转录组时[^\n]+)$', r'\1\n\n![同一组 RNA，两种细胞边界](../../boundaries.svg)\n\n编者示意｜两幅图里的点没有动。只把分界线向右移，十字标记的 RNA 就换了归属。非实验数据。', body, count=1)
             intro = ''
             if path.is_relative_to(vault/PAPERS):
                 doi = str(meta.get('doi',''))

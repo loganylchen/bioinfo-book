@@ -18,6 +18,10 @@
 
 做空间转录组时，一张分割图很容易给人确定感：边界勾好了，每个RNA点也有了归属，后面似乎只需按标准流程聚类、注释、找通讯。真正麻烦的是，同一张组织图换一个分割方法，细胞数、每细胞基因数，甚至某群细胞表达什么，都可能一起改变。此时该相信看起来更漂亮的轮廓，还是综合分更高的软件？
 
+![同一组 RNA，两种细胞边界](../../boundaries.svg)
+
+编者示意｜两幅图里的点没有动。只把分界线向右移，十字标记的 RNA 就换了归属。非实验数据。
+
 2026年10月23日，Nature Methods发表了原创基准研究《Benchmarking segmentation methods for spatial transcriptomics》，官网文章类型为Analysis。Martínez-de-Morentin、Khan等人把多种分割工具放进统一流程，并把评价延伸到细胞组成、标记基因和通讯推断。本文不把它压成“安装第一名”的推荐清单，而是用它回答一个更实用的问题：当我们借用别人的benchmark选工具时，究竟借用了哪些前提？
 
 ![分割之前，先确认比较对象](assets/spatial-segmentation/hero1.jpg)

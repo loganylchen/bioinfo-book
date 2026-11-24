@@ -2,9 +2,9 @@
 
 [在线阅读](https://loganylchen.github.io/bioinfo-book/) · [下载 EPUB](https://loganylchen.github.io/bioinfo-book/bioinfo-book.epub) · [图版与授权](https://loganylchen.github.io/bioinfo-book/rights.html)
 
-这是独立的 Quarto Book 仓库。`chapters/` 包含入选章节的完整 Markdown（`.qmd`）和正文引用的图片，`_quarto.yml` 是书的目录。只克隆本仓库，用 Quarto 1.8.27 执行 `quarto render` 即可在 `_book/` 生成带搜索、上一章／下一章、图版的网页和 EPUB。无需访问原始笔记库。
+这是独立的 Quarto Book 仓库。`chapters/` 包含入选章节的完整 Markdown（`.qmd`）和正文引用的图片，`_quarto.yml` 是书的目录。使用 Quarto 1.8.27 和 Python 3.10+（`pip install lxml==6.0.2`），运行 `quarto render` 即可在 `_book/` 生成带搜索、上一章／下一章和图版的网页及 EPUB。无需访问原始笔记库。
 
-[第 14 章排版对照页](https://loganylchen.github.io/bioinfo-book/preview/spatial-segmentation/)由 `python3 publishing/reading-proof/build.py` 在整书构建后生成，不进入正式目录、站内搜索或 EPUB。
+`publishing/reader.py` 在构建结束时统一排版。文献章从研究问题开始，原归档封面和核验记录移至章末；方法章保留原有的使用条件和顺序。网页使用可折叠的章节目录，EPUB 无需脚本即可阅读全文。旧版样章网址会转到正式章节。
 
 ## 更新与选稿
 
