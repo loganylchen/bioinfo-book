@@ -1,0 +1,976 @@
+# 实施资源与伪代码
+
+本页将 [2. 分析SOP](meta-workflow.qmd) 转换为工程接口。示例代码是算法伪代码，不保证直接运行；正式实现必须有单元测试、容器、固定版本和小规模 pilot。
+
+## 1. 建议项目目录
+
+```text
+sc_meta_program_project/
+├── README.md
+├── config/
+│   ├── config.yaml
+│   ├── samples.tsv
+│   └── contrasts_or_groups.tsv
+├── environment/
+│   ├── environment.yml
+│   ├── renv.lock
+│   └── container_digest.txt
+├── input/
+│   ├── raw_counts.h5ad
+│   ├── cell_metadata.tsv
+│   └── gene_mapping.tsv
+├── manifest/
+│   ├── input_files.tsv
+│   ├── software_versions.tsv
+│   └── seeds.tsv
+├── qc/
+│   ├── input_summary.tsv
+│   ├── cell_malignancy.tsv
+│   ├── sample_qc.tsv
+│   └── excluded_samples.tsv
+├── preprocessing/
+│   └── <study_id>/
+│       ├── hvg_stats.tsv
+│       ├── hvg_primary.txt
+│       ├── gene_sd.tsv
+│       └── calibration_cells.txt
+├── cnmf/
+│   └── <tumour_id>/k_<K>/
+│       ├── replicate_spectra/
+│       ├── consensus_spectra.npz
+│       ├── spectra_tpm.tsv.gz
+│       ├── gene_spectra_score.tsv.gz
+│       ├── usage_raw.tsv.gz
+│       ├── usage_normalized.tsv.gz
+│       └── metrics.json
+├── programs/
+│   ├── programs.tsv
+│   ├── marker_top50.tsv
+│   ├── basis_top50.tsv
+│   ├── program_qc.tsv
+│   ├── local_geps.tsv
+│   └── local_gep_membership.tsv
+├── robust/
+│   ├── robust_programs.tsv
+│   ├── removed_programs.tsv
+│   └── overlap_matrix.npz
+├── mp/
+│   ├── meta_programs.tsv
+│   ├── mp_membership.tsv
+│   ├── mp_top50.tsv
+│   ├── residual_programs.tsv
+│   └── cluster_stability.tsv
+├── network/
+│   ├── recurrent_graph_nodes.tsv
+│   ├── landscape_graph_nodes.tsv
+│   ├── graph_edges.tsv.gz
+│   ├── panel_eligibility.tsv.gz
+│   ├── resolution_sweep.tsv
+│   ├── coclustering_matrix.npz
+│   ├── graph_modules.tsv
+│   ├── landscape_singletons.tsv
+│   ├── bridge_nodes.tsv
+│   ├── patient_dedup_sensitivity.tsv
+│   ├── weak_core_members.tsv
+│   └── graph_vs_greedy_match.tsv
+├── scores/
+│   ├── cell_mp_scores.h5ad
+│   └── tumour_mp_summary.tsv
+├── ith/
+│   ├── ith_metrics.tsv
+│   ├── bootstrap_stability.tsv
+│   ├── variance_partition.tsv
+│   └── mp_classification.tsv
+├── annotation/
+│   ├── enrichment.tsv
+│   ├── reference_mp_mapping.tsv
+│   └── mp_names.tsv
+├── reports/
+│   ├── pilot_report.md
+│   ├── sensitivity_report.md
+│   └── final_report.md
+└── logs/
+```
+
+原则：raw input 只读；中间文件可重建；所有人工决定进入 manifest/config，不埋在 notebook cell 中。
+
+## 2. 配置文件模板
+
+```yaml
+analysis:
+  mode: multi_study_atlas  # single_tumour_mapping | single_study_discovery | multi_study_atlas
+  species: human
+  genome: GRCh38
+  annotation_release: TODO
+  master_seed: 20260826
+
+input:
+  counts_layer: counts
+  gene_id_type: ensembl
+  cell_id_column: cell_id
+  study_column: study_id
+  patient_column: patient_id
+  tumour_column: tumour_id
+  batch_column: batch_id
+  platform_column: platform
+  malignant_column: malignant_status
+  doublet_column: doublet_status
+
+eligibility:
+  primary_min_malignant_cells: 200       # proposed operational default
+  exploratory_min_malignant_cells: 100   # proposed operational default
+  unresolved_cells_in_primary: false
+
+calibration:
+  unit: study_platform
+  balance_tumours: true
+  cells_per_tumour_cap: TODO_FROM_PILOT
+  hvg_method: cnmf_fano
+  n_hvg_primary: 2000
+  n_hvg_sensitivity: [3000]
+  scale_source: raw_counts
+  zero_center: false
+  log_transform: false
+  clip_negative: false
+
+cnmf:
+  ranks: [4, 5, 6, 7, 8, 9]
+  n_iter: 100
+  init: random
+  beta_loss: frobenius
+  max_iter: 1000
+  tolerance: TODO_PIN_EXPLICITLY
+  local_neighborhood_fraction: 0.30
+  density_threshold_by_calibration_unit: TODO_FROM_PILOT
+  density_threshold_sensitivity: [2.0, TODO_LOOSER, TODO_STRICTER]
+
+programs:
+  primary_top_gene_source: gene_spectra_score
+  sensitivity_top_gene_source: consensus_basis
+  top_n_primary: 50
+  top_n_sensitivity: [30, 100]
+
+robust_filter:
+  within_tumour_different_k_min_overlap: 35
+  cross_tumour_min_overlap: 10
+  require_different_patient: true
+  within_tumour_redundancy_overlap_boundary: gt_10  # exact public-code behavior; compare ge_10
+
+mp_clustering:
+  methods_to_run: [gavish_greedy, leiden_consensus, leiden_plus_absorption]
+  reference_method: gavish_greedy
+  founder_min_overlap: 10
+  add_min_overlap: 10
+  founder_min_neighbors_exclusive: 5
+  repeat_tie_order_permutations: 100
+  require_multi_study_for_atlas_label: true
+
+graph_clustering:
+  status: experimental
+  graph_modes: [recurrent_graph, landscape_graph]
+  primary_top_gene_source: marker_top50
+  sensitivity_top_gene_source: basis_top50
+  top_n_sensitivity: [30, 100]
+  local_gep:
+    source: stage6_qc_pass_programs
+    grouping: complete_linkage
+    distance: 50_minus_top50_overlap
+    same_rank_distance: 50
+    cut_height: 15
+    cut_height_sensitivity: [12, 18]
+    forbidden_grouping: single_linkage
+    top50_definition: gene_frequency_consensus
+    tie_breaker: mean_continuous_marker_score
+    save_medoid: true
+    single_k_nodes_are_core_eligible: false
+  edge:
+    min_top50_overlap: 10
+    min_top50_overlap_sensitivity: [5, 15]
+    weight: raw_jaccard
+    transform: none
+    active_only_across_patients: true
+    retain_same_patient_diagnostic_edges: true
+    retain_isolates: true
+    threshold5_diagnostic_gene_sets: [mitochondrial, ribosomal, stress, housekeeping]
+    diagnostic_gene_set_resource: versioned_project_lists
+  panel_eligibility:
+    primary_min_fraction: 0.80
+    sensitivity_fractions: [0.60, 0.80, 0.90]
+    panel_limited_label: cross_study_panel_limited
+  leiden:
+    algorithm: weighted_leiden
+    objective: CPM
+    resolution_grid: [0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
+    provisional_primary_resolution: 0.10
+    seeds_per_resolution: 100
+    consensus_method: complete_linkage_on_one_minus_coassignment
+    consensus_min_coassignment: 0.80
+  module_support:
+    candidate_mp_min_independent_patients: 3
+    atlas_mp_min_independent_studies: 2
+    singleton_dyad_label: landscape_restricted
+    weak_core_member_flag_below_consensus_overlap: 10
+  patient_dedup_sensitivity:
+    enabled: true
+    grouping: complete_linkage
+    within_patient_min_pairwise_overlap: 10
+    representative_order: [mean_cross_patient_edge_weight_desc, malignant_cell_count_desc, node_id]
+    coupled_to_edge_threshold_sweep: false
+    rerun_edge_threshold: 10
+    rerun_resolution: 0.10
+  bridge:
+    affinity_range: [0.40, 0.60]
+    max_top_two_affinity_gap: 0.10
+    force_hard_assignment: false
+  residual_absorption:
+    enabled_as_separate_arm: true
+    min_consensus_overlap: 10
+    bridge_if_top_two_overlap_gap_lte: 1
+    global_tie_break_order: [overlap_desc, node_id, module_id]
+    update_module_consensus: true
+
+bootstrap:
+  enabled: true
+  cell_fraction: 0.80
+  repeats: 10
+  provisional_min_match_fraction: 0.80
+  provisional_min_median_top50_jaccard: 0.50
+
+scoring:
+  method: TODO_PIN_IMPLEMENTATION
+  min_signature_genes: 25
+  high_score_threshold: TODO_CALIBRATE_FROM_NULL
+
+annotation:
+  msigdb_version: TODO
+  collections: [H, C5, C8]
+  fdr: 0.05
+  reference_gavish_mp_table: TODO_PATH
+```
+
+任何 `TODO` 未填写时 workflow 应立即失败，而不是使用隐式默认值。
+
+## 3. 关键表的最低字段
+
+### `sample_qc.tsv`
+
+```text
+study_id patient_id tumour_id platform batch_id
+n_cells_total n_malignant_singlet median_counts median_genes median_pct_mito
+eligibility_tier included exclusion_reason
+```
+
+### `cnmf_run_metrics.tsv`
+
+```text
+program_run_id study_id patient_id tumour_id K n_cells n_hvg
+n_replicates n_converged beta_loss max_iter density_threshold
+n_spectra_before n_spectra_after consensus_silhouette reconstruction_error
+status failure_reason software_version code_commit
+```
+
+### `programs.tsv`
+
+```text
+program_id study_id patient_id tumour_id K gep_index
+marker_top50_id basis_top50_id
+usage_prevalence usage_iqr usage_q90_q10
+corr_n_counts corr_n_genes corr_pct_mito
+mitochondrial_flag ribosomal_flag stress_flag doublet_flag
+run_status
+```
+
+### `robust_programs.tsv`
+
+```text
+program_id retained
+best_cross_k_program cross_k_overlap cross_k_jaccard
+best_cross_tumour_program cross_tumour_overlap cross_tumour_patient_id
+redundant_with removal_reason
+```
+
+### `local_geps.tsv`
+
+```text
+local_gep_id study_id patient_id tumour_id
+member_program_ids member_K_values n_distinct_K cross_k_supported single_k_support
+consensus_top50_id medoid_program_id mean_within_group_jaccard
+core_graph_eligible technical_flags
+```
+
+### `graph_edges.tsv`
+
+```text
+graph_mode node_i node_j patient_i patient_j study_i study_j
+top50_overlap jaccard active_at_5 active_at_10 active_at_15
+active_for_primary_clustering same_patient_diagnostic
+panel_eligibility_i_in_j panel_eligibility_j_in_i panel_limited_flag
+```
+
+### `panel_eligibility.tsv`
+
+```text
+graph_mode node_id source_study target_study top50_source
+n_top_genes_eligible eligibility_fraction panel_limited_flag
+```
+
+### `graph_modules.tsv`
+
+```text
+graph_mode resolution module_id node_id membership_type
+coassignment_to_core second_module_id second_module_affinity bridge_flag
+member_consensus_overlap weak_core_member_flag
+n_patients n_tumours n_studies coverage max_study_fraction study_entropy
+candidate_mp atlas_mp landscape_restricted technical_flags
+```
+
+### `graph_vs_greedy_match.tsv`
+
+```text
+graph_module_id greedy_mp_id shared_nodes node_jaccard
+top50_overlap top50_jaccard split_merge_status
+adjusted_rand_index normalized_mutual_information comparison_node_universe
+```
+
+### `meta_programs.tsv`
+
+```text
+mp_id mp_name status clustering_method graph_mode
+n_programs n_tumours n_patients n_studies n_platforms n_cancer_types
+founder_program top50_gene_list_id
+mitochondrial_flag ribosomal_flag stress_flag doublet_flag single_study_flag
+cluster_stability leave_one_study_out_stability
+```
+
+### `ith_metrics.tsv`
+
+```text
+mp_id study_id patient_id tumour_id n_cells
+score_mean score_median score_iqr score_mad score_q90_q10
+fraction_high fraction_low
+corr_n_counts corr_n_genes corr_pct_mito
+bootstrap_match_fraction bootstrap_median_jaccard
+classification classification_reason
+```
+
+## 4. study-level preprocessing 伪代码
+
+```python
+# Pseudocode only. The current cNMF CLI normally estimates HVGs and SD
+# on each matrix passed to prepare(); this workflow needs a custom step.
+
+for calibration_unit in calibration_units:
+    counts_all = raw_counts[cells_in(calibration_unit, malignant=True, singlet=True), :]
+    meta_all = metadata.loc[counts_all.obs_names]
+
+    calibration_cells = balanced_subsample_by_tumour(
+        meta_all,
+        cap=config.calibration.cells_per_tumour_cap,
+        seed=seed_for(calibration_unit)
+    )
+
+    counts_cal = counts_all[calibration_cells, :]
+    tpm_cal = normalize_rows_to_target(counts_cal, target=1_000_000)
+
+    hvg_stats = cnmf_fano_overdispersion(tpm_cal)
+    hvg = top_genes(hvg_stats, n=config.calibration.n_hvg_primary)
+
+    gene_sd = sample_sd(counts_cal[:, hvg], axis="cells")
+    hvg = hvg[is_finite(gene_sd) & (gene_sd > 0)]
+    gene_sd = gene_sd[hvg]
+
+    save(hvg_stats, hvg, gene_sd, calibration_cells)
+```
+
+### 实现警告
+
+- 不要先计算 study-level SD，然后再调用会对每个 tumour 重做 `sc.pp.scale()` 的默认 `cnmf prepare`；这会二次缩放并破坏设计。
+- 可行实现是复用 cNMF 的 factorization/consensus 逻辑，但显式传入已经按固定 SD 缩放的非负矩阵。
+- 另一条实现路径是修改/封装 `get_norm_counts()`，允许传入外部 `gene_sd` 并跳过内部重新估计。
+- 修改后必须为“相同输入产生相同 prepared matrix”写单元测试。
+
+## 5. tumour cNMF 伪代码
+
+```python
+for tumour_id in eligible_tumours:
+    study = study_of(tumour_id)
+    hvg = load_hvg(study)
+    gene_sd = load_gene_sd(study)
+
+    C = raw_counts[cells_of(tumour_id, malignant=True, singlet=True), hvg]
+    X = C / gene_sd                    # no centering, no log, no clipping
+
+    assert X.min() >= 0
+    assert every_cell_has_nonzero_hvg_counts(X)
+
+    for K in [4, 5, 6, 7, 8, 9]:
+        spectra_runs = []
+
+        for r in range(100):
+            U_r, G_r = nmf(
+                X,
+                n_components=K,
+                init="random",
+                beta_loss="frobenius",
+                seed=seed_for(tumour_id, K, r)
+            )
+            spectra_runs.extend(l2_normalize_rows(G_r))
+
+        local_density = mean_distance_to_L_nearest(
+            spectra_runs,
+            L=floor(0.30 * 100)
+        )
+        spectra_keep = filter_by_frozen_threshold(spectra_runs, local_density, study)
+
+        require(nrow(spectra_keep) >= K)
+        labels = kmeans(spectra_keep, n_clusters=K, frozen_seed=1)
+        G_consensus = rowwise_gene_median_by_cluster(spectra_keep, labels)
+        G_consensus = l1_normalize_rows(G_consensus)
+
+        U_consensus = nonnegative_least_squares(X, fixed_spectra=G_consensus)
+        U_normalized = normalize_rows_to_sum_one(U_consensus)
+
+        G_tpm = refit_all_genes_tpm(raw_counts_for_tumour, U_normalized)
+        gene_scores = multivariable_ols_z_tpm_on_usages(raw_counts_for_tumour, U_consensus)
+
+        save_all_outputs_and_metrics()
+```
+
+## 6. top-gene 与 robust filtering 伪代码
+
+```python
+for gep in all_consensus_geps:
+    marker_top50[gep] = top_positive_genes(gene_spectra_score[gep], n=50)
+    basis_top50[gep] = top_genes(consensus_basis[gep], n=50)
+
+# Primary path: marker_top50
+for tumour in tumours:
+    programs = programs_from(tumour)
+
+    # Require another rank, not merely another component from the same rank.
+    programs = keep_if_best_overlap_with_different_K(programs) >= 35
+
+    # Rank by strongest support in an independent tumour/patient.
+    programs = keep_if_best_overlap_in_other_patient(programs) >= 10
+
+    # Greedy within-tumour de-duplication.
+    programs = greedy_nonredundant(programs, remove_if_overlap_gt=10)
+
+robust_programs = concatenate(programs_by_tumour)
+```
+
+必须保留每一步的 `retained`, `removed_reason`, `matched_program_id` 和 overlap；不要只输出最终 ID 列表。
+
+## 7. MP clustering 伪代码
+
+```python
+remaining = robust_programs
+clusters = []
+
+while True:
+    overlap = pairwise_top50_intersection(remaining)
+    neighbor_count = count_other_programs(overlap >= 10)
+    founder = argmax(neighbor_count)
+
+    if neighbor_count[founder] <= 5:
+        break
+
+    cluster = [founder]
+    mp_genes = top50(founder)
+    remove(founder, remaining)
+
+    while max(overlap_with(mp_genes, remaining)) >= 10:
+        next_program = argmax(overlap_with(mp_genes, remaining))
+        cluster.append(next_program)
+        remove(next_program, remaining)
+
+        mp_genes = top_50_by_frequency_across_cluster(cluster)
+        break_frequency_ties_with_continuous_gene_scores(mp_genes, cluster)
+
+    clusters.append({"members": cluster, "top50": mp_genes})
+
+residual_programs = remaining
+```
+
+对 founder ties 重复不同固定顺序，并比较 membership 与 top-50 stability。
+
+## 7b. Experimental graph consensus 伪代码
+
+### local GEP projection
+
+```python
+# Input comes from Stage 6, not from the Stage 7 cross-tumour-filtered table.
+def project_one_tumour(programs, tumour_id, cut_height):
+    D = matrix(nrow=len(programs), ncol=len(programs), fill=50)
+    set_diagonal(D, 0)
+
+    for i, j in all_unordered_pairs(programs):
+        if programs[i].K != programs[j].K:
+            D[i, j] = D[j, i] = 50 - top50_overlap(programs[i], programs[j])
+        else:
+            D[i, j] = D[j, i] = 50  # same-rank factors cannot supply cross-K support
+
+    groups = complete_linkage_cut(D, height=cut_height)
+    projected = []
+
+    for group in groups:
+        top50 = top_50_by_gene_frequency(
+            group,
+            tie_breaker="mean_continuous_marker_score"
+        )
+        medoid = (
+            only_member(group)
+            if len(group) == 1
+            else argmax_mean_pairwise_jaccard(group)
+        )
+        k_support = sorted(unique(K_of(member) for member in group))
+
+        projected.append({
+            "local_gep_id": deterministic_id(tumour_id, cut_height, group),
+            "members": member_ids(group),
+            "top50": top50,
+            "medoid_program_id": medoid,
+            "K_support": k_support,
+            "cross_k_supported": len(k_support) >= 2,
+            "single_k_support": len(k_support) == 1,
+            "core_graph_eligible": len(k_support) >= 2
+        })
+
+    return projected
+
+
+assert (
+    config.graph_clustering.local_gep.grouping
+    != config.graph_clustering.local_gep.forbidden_grouping
+)
+local_nodes_by_cut = {12: [], 15: [], 18: []}
+
+for tumour in tumours:
+    programs = qc_pass_programs(tumour)
+    for cut_height in [12, 15, 18]:
+        projected = project_one_tumour(programs, tumour, cut_height)
+        local_nodes_by_cut[cut_height].extend(projected)
+        save_projection(tumour, cut_height, projected)
+
+local_nodes = local_nodes_by_cut[15]  # only the frozen primary cut enters the main graph
+save(local_nodes, local_gep_membership)
+```
+
+### sparse weighted graph
+
+```python
+def build_graph(nodes, graph_mode):
+    graph = Graph()
+    graph.add_nodes(nodes)            # add first so zero-degree nodes are retained
+
+    # Generate only pairs sharing at least one top gene; do not materialize N x N strings.
+    gene_to_nodes = inverted_index(nodes, key="top50")
+    overlap_count = Counter()
+    for gene, ids in gene_to_nodes.items():
+        for i, j in combinations(sorted(ids), 2):
+            overlap_count[i, j] += 1
+
+    # Store the union of all frozen threshold views once; primary is still overlap >=10.
+    for (i, j), intersection in overlap_count.items():
+        if intersection < 5:
+            continue
+
+        union = 50 + 50 - intersection
+        weight = intersection / union
+        same_patient = nodes[i].patient_id == nodes[j].patient_id
+
+        graph.add_edge(
+            i, j,
+            overlap=intersection,
+            weight=weight,
+            active_at_5=not same_patient and intersection >= 5,
+            active_at_10=not same_patient and intersection >= 10,
+            active_at_15=not same_patient and intersection >= 15,
+            active_for_primary_clustering=not same_patient and intersection >= 10,
+            same_patient_diagnostic=same_patient
+        )
+
+    # Compute this node x study table even when no edge exists.
+    panel_eligibility = compute_panel_eligibility(
+        nodes,
+        eligible_gene_universe_by_study,
+        denominator=50
+    )
+    flag(panel_eligibility < 0.80, "cross_study_panel_limited")
+
+    save(graph.nodes, graph.edges, panel_eligibility)
+    return graph
+
+recurrent_graph = build_graph(stage7_robust_programs, "recurrent_graph")
+landscape_graph = build_graph(local_nodes_by_cut[15], "landscape_graph")
+landscape_cut_sensitivity_graphs = {
+    cut: build_graph(local_nodes_by_cut[cut], f"landscape_graph__cut_{cut}")
+    for cut in [12, 18]
+}
+graphs = {
+    "recurrent_graph": recurrent_graph,
+    "landscape_graph": landscape_graph
+}
+```
+
+实际 atlas 应使用整数 node IDs、倒排索引和 sparse matrices；不要建立包含字符串 gene sets 的稠密全 pair 数据框。
+
+### Leiden-CPM multi-seed consensus
+
+```python
+EDGE_THRESHOLDS = [5, 10, 15]
+RESOLUTIONS = [0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60]
+N_SEEDS = 100
+PRIMARY_EDGE_THRESHOLD = 10
+PRIMARY_RESOLUTION = 0.10
+results = {}
+
+for graph_mode, stored_graph in graphs.items():
+    if graph_mode == "landscape_graph":
+        core_nodes = nodes_where(stored_graph, cross_k_supported=True)
+    else:
+        core_nodes = all_nodes(stored_graph)
+
+    for edge_threshold in EDGE_THRESHOLDS:
+        active_graph = cross_patient_threshold_view(
+            stored_graph,
+            core_nodes,
+            min_overlap=edge_threshold
+        )
+        explicitly_add_isolated_core_nodes(active_graph, core_nodes)
+
+        for gamma in RESOLUTIONS:
+            partitions = []
+            for seed in deterministic_seeds(N_SEEDS, graph_mode, edge_threshold, gamma):
+                partitions.append(
+                    weighted_leiden(
+                        active_graph,
+                        objective="CPM",
+                        resolution=gamma,
+                        weights="weight",
+                        seed=seed
+                    )
+                )
+
+            P = pairwise_coassignment(partitions)
+            assert_symmetric(P)
+            assert_all_equal(diagonal(P), 1.0)
+
+            consensus = complete_linkage_cut(distance=1 - P, height=0.20)
+            module_top50 = frequency_consensus_top50(
+                consensus,
+                tie_breaker="mean_continuous_marker_score"
+            )
+            metrics = summarize_resolution(consensus, P, active_graph)
+            results[graph_mode, edge_threshold, gamma] = {
+                "partitions": partitions,
+                "P": P,
+                "consensus": consensus,
+                "module_top50": module_top50,
+                "metrics": metrics
+            }
+            save(graph_mode, edge_threshold, gamma, results[graph_mode, edge_threshold, gamma])
+
+    primary = results[graph_mode, PRIMARY_EDGE_THRESHOLD, PRIMARY_RESOLUTION]
+    for alternate_edge_threshold in [5, 15]:
+        alternate = results[graph_mode, alternate_edge_threshold, PRIMARY_RESOLUTION]
+        compare_threshold_modules_to_primary_by_node_jaccard(alternate, primary)
+
+    primary_modules = primary["consensus"]
+    primary_top50 = primary["module_top50"]
+    annotate_support(
+        primary_modules,
+        candidate_min_patients=3,
+        atlas_min_studies=2
+    )
+
+    for module in primary_modules:
+        for node in members(module):
+            overlap = top50_overlap(node, primary_top50[module])
+            if overlap < 10:
+                label(node, "weak_core_member")   # flag only; never trim partition here
+
+    for node in core_nodes:
+        affinity = mean_coassignment_to_each_module(
+            node,
+            primary_modules,
+            P=primary["P"]
+        )
+        if top_two_in_range(affinity, low=0.40, high=0.60, max_gap=0.10):
+            label(node, "bridge")
+            save_soft_memberships(node, affinity)
+
+    retain_singletons_and_dyads(label="landscape_restricted")
+
+    # Low-threshold diagnostic: quantify why edges 5-9 appeared.
+    threshold5_only_edges = edges_where(
+        stored_graph,
+        overlap_min=5,
+        overlap_max=9,
+        different_patient_only=True
+    )
+    report_shared_gene_fraction(
+        threshold5_only_edges,
+        gene_sets=["mitochondrial", "ribosomal", "stress", "housekeeping"]
+    )
+
+    # Patient-balance sensitivity changes only the node projection, then reruns one setting.
+    dedup_nodes = collapse_within_patient(
+        nodes=core_nodes,
+        source_graph=stored_graph,
+        missing_cross_patient_mean_weight=0,
+        grouping="complete_linkage",
+        min_pairwise_overlap=10,
+        representative_order=[
+            "mean_cross_patient_edge_weight_desc",
+            "malignant_cell_count_desc",
+            "node_id"
+        ]
+    )
+    dedup_graph = build_graph(dedup_nodes, graph_mode + "__patient_dedup")
+    dedup_result = run_leiden_consensus_one_setting(
+        dedup_graph,
+        min_overlap=10,
+        resolution=0.10,
+        n_seeds=100
+    )
+    compare_patient_dedup_to_primary(dedup_result, primary)
+
+# Change only local projection cut; downstream comparison stays at edge 10 / resolution 0.10.
+for cut, cut_graph in landscape_cut_sensitivity_graphs.items():
+    cut_result = run_leiden_consensus_one_setting(
+        cut_graph,
+        min_overlap=10,
+        resolution=0.10,
+        n_seeds=100
+    )
+    compare_local_cut_to_primary_landscape(cut, cut_result, results[
+        "landscape_graph", PRIMARY_EDGE_THRESHOLD, PRIMARY_RESOLUTION
+    ])
+```
+
+R 可用 `igraph::cluster_leiden(objective_function="CPM")`，Python 可用 `leidenalg`；必须固定包版本并用 toy graph 验证 CPM、weights 和 resolution 的实际参数语义。
+
+### separate 8c absorption arm
+
+```python
+for graph_mode in ["recurrent_graph", "landscape_graph"]:
+    primary = results[graph_mode, PRIMARY_EDGE_THRESHOLD, PRIMARY_RESOLUTION]
+    original_partition = deep_copy(primary["consensus"])
+    eligible_core_modules = modules_meeting_predeclared_support(original_partition)
+    original_core_consensus = subset(primary["module_top50"], eligible_core_modules)
+    expanded_modules = deep_copy(eligible_core_modules)
+    residuals = nodes_outside_eligible_cores_plus_queries(
+        graph_mode,
+        original_partition,
+        eligible_core_modules
+    )
+
+    while residuals:
+        candidates = all_residual_module_overlaps(residuals, expanded_modules)
+        if not candidates:
+            break
+        best_pair = sort_by(
+            candidates,
+            overlap_desc=True,
+            then=["node_id", "module_id"]
+        )[0]
+
+        if best_pair.overlap < 10:
+            break
+
+        node_best, node_second = two_best_modules_for_node(best_pair.node, candidates)
+        if node_second is not None and node_best.overlap - node_second.overlap <= 1:
+            label(best_pair.node, "bridge")
+            remove(best_pair.node, residuals)
+            continue
+
+        assign(best_pair.node, node_best.module, membership="peripheral_absorbed")
+        remove(best_pair.node, residuals)
+        update_frequency_consensus(node_best.module)
+
+    retain(residuals, membership="unassigned_or_restricted")
+    save_original_leiden_partition_separately(
+        graph_mode,
+        original_partition,
+        original_core_consensus
+    )
+    save_absorbed_membership_separately(graph_mode, expanded_modules)
+```
+
+## 8. 单元测试和集成测试
+
+### preprocessing
+
+- 相同 study-level `hvg` 和 `gene_sd` 应用于同一 study 所有 tumours。
+- 缩放后矩阵无负值、无 NaN/Inf。
+- 不发生第二次 variance scaling。
+- gene order 在 count matrix、SD vector 和 spectra 中一致。
+
+### cNMF consensus
+
+- 固定 seeds 时结果可重现。
+- 每个 replicate 输出 K 个 spectra。
+- L2/L1 normalization 后 norm 正确。
+- filtering 后少于 K 时明确失败。
+- cluster labels 能追溯到 replicate seed。
+
+### top genes
+
+- gene symbols 唯一。
+- 仅取正向 marker scores。
+- top-50 tie 规则确定且可重现。
+- marker/basis 两条路径不互相覆盖文件。
+
+### robust/MP clustering
+
+- synthetic programs 能正确通过 35/10 阈值。
+- 同 patient 多 tumour 不被当 independent-patient support。
+- residual programs 不丢失。
+- founder order sensitivity 可重跑。
+
+### graph branch
+
+- local grouping 不把同一 K factors 当作 cross-K support，且 complete-linkage cut 12/15/18 可复现；single linkage 被配置拒绝。
+- `recurrent_graph` node IDs 与 8a 输入逐个一致。
+- Jaccard 使用 `intersection / (100 - intersection)`；overlap 10 得到约 0.111。
+- 同患者 edge 被保存但不进入 5/10/15 的 active cross-patient views。
+- overlap 5/10/15 views 的 edge counts 单调不增，primary view 精确使用 10。
+- zero-degree nodes、singletons 和 dyads 不丢失。
+- panel eligibility 在 non-edge pairs/studies 也被计算。
+- 固定 graph、resolution 和 seed 时 Leiden partition 可复现。
+- co-clustering matrix 对称、对角为 1、所有值在 `[0,1]`。
+- resolution sweep 对每个 edge threshold 输出完整 size distribution，且 sensitivity comparison 不重新挑 resolution。
+- within-patient dedup representative 的三层 tie-break 可重现。
+- `weak_core_member` 只改变 flag/summary，不改变原始 partition。
+- bridge 和 peripheral membership 不覆盖原始 Leiden core partition。
+- toy graph 中 graph-vs-greedy matching、split 和 merge 标签符合预期。
+
+## 9. 计算量估计
+
+基础 NMF fits 数：
+
+\[
+N_{fits}=N_{tumours}\times 6\;K\text{ values}\times100\;replicates
+\]
+
+例如：
+
+- 20 tumours：12,000 fits。
+- 100 tumours：60,000 fits。
+- 1,163 tumours：697,800 fits。
+
+若每个 tumour 再做 10 次完整 cell bootstrap，约乘以 11。全 atlas 必须使用集群、任务数组、断点续跑和缓存；先做 pilot，不能直接在工作站全量运行。
+
+## 10. 建议 pilot
+
+### 数据
+
+Lee H-O et al. 2020 colorectal cancer scRNA-seq：
+
+- 论文：*Lineage-dependent gene expression programs influence the immune landscape of colorectal cancer*。
+- Nature Genetics 2020。
+- DOI: `10.1038/s41588-020-0636-z`。
+- Gavish Figure 2b 使用该研究的 SMC09 展示 G2/M、stress、proteasomal degradation、IFN/MHC-II 和 PDAC-classical-like programs，因此可与已发表结果部分对照。
+
+### pilot sampling
+
+按 malignant-cell 数选择 small/medium/large 三档 tumours；每档至少 3 个，且覆盖不同 patients。不要只挑已知能产生漂亮 MPs 的 samples。
+
+### preprocessing/solver 比较变体
+
+1. Variant A：尽可能复现 Gavish preprocessing + NMF。
+2. Variant B：Gavish preprocessing + cNMF consensus。
+3. Variant C：本 SOP 的 study-calibrated cNMF。
+
+### clustering 比较臂
+
+不需要立即运行完整 `3 × 3` factorial。最低要求是：
+
+1. `A + 8a greedy`：发表框架 reference。
+2. `C + 8a greedy`：固定本 SOP programs 的 greedy 结果。
+3. `C + 8b recurrent_graph Leiden`：与上一臂使用逐个相同的 recurrent nodes，隔离 clustering effect。
+4. `C + 8b landscape_graph Leiden`：研究 pre-inter-filter topology，不能作为纯 clustering ablation。
+5. `C + 8c Leiden + absorption`：检验动态 consensus 是否改善 residual recovery。
+
+### 主要评价指标
+
+- seed consensus silhouette 和 convergence。
+- 80% cell bootstrap 的 program match fraction。
+- top-50 Jaccard 和完整 spectrum correlation。
+- 跨 K robust program 数。
+- 跨 tumour recurrence。
+- 与 Gavish 41 MPs 的 mapping。
+- recurrent graph 与 greedy 的 ARI/NMI、top-50 module matching、split/merge 和 unassigned rate。
+- edge overlap 5/10/15 × resolution 的 module count/size/stability 曲线，以及 threshold-5-only edge 的 technical-gene fraction。
+- local complete-linkage cut height 12/15/18 对 local nodes 和 landscape modules 的影响。
+- 100-seed co-clustering、cell-bootstrap 和 leave-one-study-out membership stability。
+- within-patient dedup 后的 module Jaccard、membership 和最大单患者 node share。
+- singleton/dyad、bridge、weak-core 和 context-restricted candidate 的保留率。
+- panel-limited non-edge 比例和 0.6/0.8/0.9 sensitivity。
+- mitochondrial/ribosomal/stress/doublet flags 和 technical-module purity。
+- usage 与 QC covariates 的相关。
+- 运行时间和内存。
+
+先冻结 success criteria，再查看生物学注释。8b/8c 只有在稳定性、41 MP recovery、technical purity 和 context-specific retention 上总体优于或稳定补充 8a，才可升级。
+
+## 11. Gavish 41 MPs 参考名称
+
+精确基因列表应从最终 Supplementary Table 2 获取。名称如下：
+
+| MP | 名称 | MP | 名称 |
+| --- | --- | --- | --- |
+| MP1 | G2/M | MP22 | Secreted I |
+| MP2 | G1/S | MP23 | Secreted II |
+| MP3 | HMG rich | MP24 | Cilia |
+| MP4 | Chromatin | MP25 | Astrocytes |
+| MP5 | Stress | MP26 | NPC (glioma) |
+| MP6 | Hypoxia | MP27 | Oligodendrocyte progenitor |
+| MP7 | Stress (in vitro) | MP28 | Oligodendrocyte normal |
+| MP8 | Proteasomal degradation | MP29 | NPC and OPC |
+| MP9 | Unfolded protein response | MP30 | PDAC classical |
+| MP10 | Protein maturation | MP31 | Alveolar |
+| MP11 | Translation initiation | MP32 | Skin pigmentation |
+| MP12 | EMT I | MP33 | RBCs |
+| MP13 | EMT II | MP34 | Platelet activation |
+| MP14 | EMT III | MP35 | Haematological related I |
+| MP15 | EMT IV | MP36 | Immunoglobulins |
+| MP16 | MES (glioma) | MP37 | Haematological related II |
+| MP17 | Interferon and MHC II (I) | MP38 | Glutathione |
+| MP18 | Interferon and MHC II (II) | MP39 | Metal response |
+| MP19 | EpiSen | MP40 | PDAC related |
+| MP20 | MYC | MP41 | Unassigned |
+| MP21 | Respiration |  |  |
+
+MP38–41 是 `Unassigned` group，不属于 11 个 hallmark families。
+
+## 12. 文献和代码
+
+### 核心方法
+
+- Kotliar D, Veres A, Nagy MA, et al. *Identifying gene expression programs of cell-type identity and cellular activity with single-cell RNA-Seq.* eLife. 2019;8:e43803. DOI: [10.7554/eLife.43803](https://doi.org/10.7554/eLife.43803).
+- cNMF implementation: [dylkot/cNMF](https://github.com/dylkot/cNMF). 建立实际环境时固定 release、commit 和依赖版本；不要只写“最新版”。
+
+### MP 框架
+
+- Gavish A, Tyler M, Greenwald AC, et al. *Hallmarks of transcriptional intratumour heterogeneity across a thousand tumours.* Nature. 2023;618:598-606. DOI: [10.1038/s41586-023-06130-4](https://doi.org/10.1038/s41586-023-06130-4).
+- Gavish code: [tiroshlab/3ca](https://github.com/tiroshlab/3ca), 重点为 `ITH_hallmarks/Generating_MPs/Generate_Meta_Programs.R` 和 `robust_nmf_programs.R`。
+- Kinker GS et al. *Pan-cancer single-cell RNA-seq identifies recurring programs of cellular heterogeneity.* Nature Genetics. 2020;52:1208-1218.
+- Barkley D et al. *Cancer cell states recur across tumor types and form specific interactions with the tumor microenvironment.* Nature Genetics. 2022;54:1192-1201.
+
+### Network consensus
+
+- Traag VA, Waltman L, van Eck NJ. *From Louvain to Leiden: guaranteeing well-connected communities.* Scientific Reports. 2019;9:5233. DOI: [10.1038/s41598-019-41695-z](https://doi.org/10.1038/s41598-019-41695-z).
+- Lancichinetti A, Fortunato S. *Consensus clustering in complex networks.* Scientific Reports. 2012;2:336. DOI: [10.1038/srep00336](https://doi.org/10.1038/srep00336).
+- Fortunato S, Barthélemy M. *Resolution limit in community detection.* PNAS. 2007;104:36-41. DOI: [10.1073/pnas.0605965104](https://doi.org/10.1073/pnas.0605965104).
+
+## 13. 当前已知实现边界
+
+- Gavish 公共仓库没有生成原始 per-tumour NMF W matrices 的完整脚本；`nrun=10` 来自文件命名和输入说明。
+- cNMF 的标准 CLI 不直接实现本 SOP 的 study-level frozen SD + per-tumour factorization组合，需要封装或修改 preprocessing。
+- 本机在整理文档时没有可用 Python 环境，因此尚未运行 cNMF pilot，也未运行 Leiden graph branch。
+- `resolution=0.10`、3-patient/2-study、co-clustering 0.80 和 bridge affinity 是 proposed operational defaults，尚未由 CRC pilot 校准。
+- R `igraph` 与 Python `leidenalg` 的参数接口并非逐字相同；正式实现必须固定一种并通过 toy graph 测试，不能混用默认值。
+- 本 SOP 不依赖本地临时下载文件；正式运行所需参考 gene lists 应复制到项目的 versioned resource 目录并记录 checksum。
+
+每个真实项目使用 [5. 项目运行记录模板](meta-template.qmd) 保存决策与结果。

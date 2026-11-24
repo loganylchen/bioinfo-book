@@ -1,0 +1,855 @@
+# 从 annotated tumour scRNA-seq 到 Meta-program 的分析 SOP
+
+> [!warning] 使用前提
+> 本 SOP 从 raw count matrix、完整 cell metadata 和基本 cell-type annotation 开始。若只有降维坐标、integrated assay、平均表达矩阵或 pseudobulk，停止分析并重新取得 raw counts。整套 proposed workflow 尚未完成实证 pilot。
+
+## Stage 0：确定分析模式和目标
+
+在运行任何代码前填写 `analysis_mode`：
+
+| 模式 | 数据 | 终点 |
+| --- | --- | --- |
+| `single_tumour_mapping` | 1 个 tumour | tumour-level GEPs；映射到已有 MPs；不做 de novo MP |
+| `single_study_discovery` | 1 个 study、多个独立 tumours | study-level recurrent MPs |
+| `multi_study_atlas` | 多个 studies、多个 tumours | atlas-level MPs 和跨研究验证 |
+
+### Gate 0
+
+- 明确 biological replicate 是 `patient_id` 还是 `tumour_id`。
+- 同一患者的多区域或多时间点样本不能当成完全独立患者。
+- 若只有一个 tumour，Stage 7 的跨 tumour robust filter 和 Stage 8 的 de novo MP clustering 均跳过；直接进入参考 MP 映射。
+
+---
+
+## Stage 1：冻结输入数据
+
+### 1.1 必需对象
+
+- `raw_counts`：`cells × genes`，UMI 数据应为未归一化整数 counts；Smart-seq2 等非 UMI 数据需记录原始单位和处理方式。
+- `cell_metadata`：每行一个 cell，至少含 [最低输入合同](meta-overview.qmd#最低输入合同) 中的字段。
+- `gene_metadata`：原始 ID、gene symbol、biotype、参考基因组及 annotation release。
+- `annotation_evidence`：原始作者 label、重新注释结果、marker 和 CNA/基因型证据。
+
+### 1.2 禁止作为 cNMF 输入的矩阵
+
+- Seurat `integrated` assay。
+- Harmony、CCA、PCA 或 latent embedding。
+- gene-wise z-score 后含负值的矩阵。
+- `scale.data`。
+- tumour pseudobulk。
+- 为作图生成的 clipped、imputed 或 batch-corrected expression，除非该方法的 count-scale 含义已被单独验证。
+
+### 1.3 gene ID 处理
+
+1. 冻结 reference genome 和 annotation release。
+2. 将 Ensembl ID 映射到 HGNC symbol，并保留映射表。
+3. 去除版本后缀前先保存原始 ID。
+4. 多个 Ensembl ID 映射到同一 symbol 时，在 count 层求和，不取平均。
+5. 无唯一 symbol 的基因保留原 ID，但不参与跨 study symbol-overlap，除非完成统一映射。
+6. 跨物种分析必须先做一对一 orthologue 映射，不能直接 uppercase 后比较。
+
+### 1.4 冻结与审计
+
+必须记录：
+
+- raw matrix 文件路径、维度、非零率和 checksum。
+- metadata 文件 checksum。
+- 每个 study、patient、tumour、platform 的 cell 数。
+- 软件环境、代码 commit、容器 digest 和 master seed。
+
+### Gate 1
+
+- `cell_id` 全局唯一。
+- `tumour_id` 无缺失且能映射到 `patient_id`。
+- 每个 count matrix column/row 与 metadata 一一对应。
+- raw counts 中不存在负值。
+- 未发现整列/整行全零对象；若有，先移除并记录。
+
+### 输出
+
+- `manifest/input_files.tsv`
+- `manifest/gene_mapping.tsv`
+- `qc/input_summary.tsv`
+
+---
+
+## Stage 2：确认恶性细胞并排除污染
+
+基本 cell-type annotation 不等于 malignant-cell confirmation。实体瘤中尤其要区分 malignant epithelial cells、正常上皮和 doublets。
+
+### 2.1 证据层
+
+按可用性组合以下证据：
+
+1. 原研究提供的 malignant annotation。
+2. canonical lineage markers 与不相容 lineage markers。
+3. 从表达推断的大尺度 CNA，例如 inferCNV、CopyKAT 或经验证的同类方法。
+4. 肿瘤特异 SNV、融合、克隆标签或 matched DNA genotype。
+5. 与可信正常细胞参考的对照。
+6. 每个 cluster 的 doublet score 和混合 lineage expression。
+
+CNA 推断应使用同 study 的可信非恶性细胞作为参考。不能把“无明显 CNA”自动等同于正常，也不能把“高 CNA signal”单独作为恶性的唯一证据。
+
+### 2.2 特殊情况
+
+- 血液肿瘤、低 CNA 肿瘤和近二倍体肿瘤不能机械套用实体瘤 CNA 规则。
+- 治疗后样本可能存在低质量、应激和正常修复上皮，应单独审计。
+- 多区域样本应保留 `region_id`，但 patient independence 仍按患者计算。
+
+### 2.3 状态字段
+
+为每个 cell 产生：
+
+- `malignant_status = malignant / non_malignant / unresolved`
+- `malignant_evidence = annotation;CNA;genotype;markers...`
+- `doublet_status = singlet / doublet / unresolved`
+- `exclusion_reason`
+
+主分析只使用 `malignant + singlet`。`unresolved` 进入敏感性分析，不与主分析混合。
+
+### Gate 2
+
+- 每个 tumour 均有可解释的 malignant-cell evidence。
+- 恶性群中不存在明显 T-cell、B-cell、myeloid 或 stromal doublet cluster。
+- CNA 结果若与 marker/作者注释冲突，冲突已人工复核并记录。
+
+### 输出
+
+- `qc/cell_malignancy.tsv`
+- `qc/malignant_annotation_report.md`
+- 每个 tumour 的 malignant-cell UMAP/marker/CNA 诊断图，仅用于 QC，不作为 NMF 输入。
+
+---
+
+## Stage 3：cell QC 和 tumour eligibility
+
+### 3.1 cell-level QC
+
+阈值应按 study、platform 和原始数据分布制定，不使用一个跨平台固定阈值。至少检查：
+
+- `n_counts`
+- `n_genes`
+- `pct_mito`
+- ribosomal fraction
+- complexity，例如 `n_genes / n_counts`
+- doublet score
+- ambient RNA 指标（若有）
+- cell-cycle score（不作为默认排除标准）
+
+Gavish 的实例阈值为 10x 常用 `n_genes > 1,000`、Smart-seq2 常用 `n_genes > 2,000`，但这些只用于理解原研究，不能不看数据直接复制。
+
+### 3.2 tumour-level eligibility
+
+Gavish 只要求至少 10 个恶性细胞；这不足以保证 cNMF 和 cell bootstrap 稳定。本 SOP 使用以下**暂定 operational tiers**，必须在 pilot 后重新评估：
+
+| 恶性 singlet 数 | 暂定处理 |
+| ---: | --- |
+| `>=200` | primary discovery；可运行完整 K=4–9 |
+| `100–199` | exploratory discovery；运行 K=4–9，但必须通过严格 bootstrap，结果单独标记 |
+| `<100` | 不做 de novo per-tumour program discovery；只做参考 MP scoring |
+
+这些不是 cNMF 论文给出的阈值。其目的是避免在 K 接近细胞数、usage 回归自由度过低时强行解释因子。
+
+同时记录：
+
+- 每个 K 的 `n_cells / K`。
+- 每个 tumour 的 median UMI、dropout、platform 和 batch。
+- 一个患者是否贡献多个 tumours。
+
+### Gate 3
+
+- 每个纳入 tumour 满足预声明的 cell-count tier。
+- 任一 study 至少有多个独立患者，才进入 de novo recurrent MP 分析。
+- 样本排除不与 clinical outcome 系统关联；若关联，报告 selection bias。
+
+### 输出
+
+- `qc/sample_qc.tsv`
+- `qc/excluded_samples.tsv`
+
+---
+
+## Stage 4：建立 study-level cNMF 校准
+
+> [!warning] 本 SOP 适配
+> 原始 cNMF 在它收到的整张矩阵上选择 HVGs 和计算 gene-SD。本 SOP 为避免小 tumour 单独估计不稳定，在 study 或技术一致的 calibration unit 上估计一次，再冻结到各 tumour。这一改动尚未发表验证。
+
+### 4.1 定义 calibration unit
+
+通常以 `study_id` 为单位。以下情况应拆成不同 calibration units：
+
+- 同一 study 混合 10x 与 Smart-seq2。
+- chemistry、参考基因组或定量流程明显不同。
+- 不同实验批次的 count-scale 不可比。
+
+不要为了增加细胞数，把来自不同研究的 raw counts 直接合并校准。
+
+### 4.2 平衡 tumour 贡献
+
+若一个 tumour 的细胞数远高于其他样本，它会支配 HVG 和 SD。对每个 calibration unit：
+
+1. 预先声明每 tumour 的 calibration cell cap。
+2. 对大样本无放回下采样至 cap；小样本全部保留。
+3. cap 应根据样本分布决定并写入 manifest；不要分析后反复调整以追求特定结果。
+4. 使用固定 seed，并做一次不同 seed 的 HVG 稳定性检查。
+
+### 4.3 HVG 选择
+
+1. 仅为 HVG 选择计算 per-cell TPM/CPM：
+
+\[
+T_{ij}=10^6\frac{C_{ij}}{\sum_j C_{ij}}
+\]
+
+2. 使用 cNMF 的 overdispersion/Fano 逻辑选择 `H=2,000` 个基因作为主分析。
+3. 保存全部 gene mean、variance、Fano、expected Fano 和 rank。
+4. 将 `H=3,000` 作为预声明的敏感性分析；不要在看完 MP 结果后才选择 H。
+5. mitochondrial、ribosomal 和 sex-chromosome genes 是否进入 factorization 必须预先决定；无论是否保留，都要在 program QC 中报告。
+
+### 4.4 gene variance scaling
+
+在同一 balanced calibration matrix 的 raw counts 上计算每个 HVG 的标准差：
+
+\[
+s_j=\operatorname{SD}(C_{:j})
+\]
+
+移除 `s_j=0` 或非有限值的基因。对该 study 每个 tumour 应用：
+
+\[
+\widetilde C^{(t)}_{ij}=\frac{C^{(t)}_{ij}}{s_j}
+\]
+
+明确：
+
+- 不减去 gene mean。
+- 不做 negative clipping。
+- 不对 factorization input 做 log transformation。
+- 不在 factorization 前对每个 cell 行归一化；这是 cNMF 原设计。必须在下游检查 usage 与 library size 的关系。
+
+### 4.5 校准 QC
+
+- 每个 HVG 被多少 tumours 和 cells 检出。
+- HVG 是否被某一个 tumour、batch 或高深度细胞群主导。
+- 不同 calibration subsampling seeds 的 HVG Jaccard。
+- gene-SD 分布及极端缩放因子。
+- 每个 tumour 在固定 HVG 集中的 nonzero counts；任何 cell 在全部 HVGs 中为 0 时停止。
+
+### Gate 4
+
+- 固定 HVG list 和 SD vector 已保存并带 checksum。
+- 没有重新按 tumour 估计 HVG/SD。
+- 主分析与敏感性分析的 H、cell cap 和 seed 已冻结。
+
+### 输出
+
+- `preprocessing/<study>.hvg_stats.tsv`
+- `preprocessing/<study>.hvg_primary.txt`
+- `preprocessing/<study>.gene_sd.tsv`
+- `preprocessing/<study>.calibration_cells.txt`
+- `preprocessing/preprocessing_manifest.yaml`
+
+---
+
+## Stage 5：逐 tumour、逐 K 运行 cNMF
+
+### 5.1 固定参数
+
+主分析默认：
+
+- `K = 4, 5, 6, 7, 8, 9`
+- `R = 100` NMF replicates per K
+- `init = random`
+- `beta_loss = frobenius`（当前 cNMF 默认；必须记录实际版本）
+- `max_iter`、`tol` 和 master seed 必须显式写入配置，不依赖隐式默认值。
+
+不使用 cNMF 的单一最优 K 作为终点；六个 K 都进入外层 cross-K robustness。
+
+### 5.2 每个 K 的 consensus
+
+对 tumour \(t\) 和 rank \(K\)：
+
+1. 在固定的 \(\widetilde C^{(t)}\) 上运行 R 次 NMF。
+2. 收集 `R × K` 个 spectra。
+3. 每个 spectrum L2 normalize。
+4. 计算到最近 `L = floor(0.3 × R)` 个 spectra 的平均欧氏距离。
+5. 根据预声明的 local-density threshold \(\tau\) 过滤离群 spectra。
+6. 将剩余 spectra 用 K-means 聚成 K 簇。
+7. 每簇逐基因取中位数，随后 L1 normalize，得到 consensus spectra。
+8. 固定 consensus spectra，用 NNLS 重新拟合 cell usages。
+9. 保存 normalized usage（每 cell sum to 1）和 unnormalized usage。
+10. 固定 usage，在 TPM 和全部保留基因上重拟合 spectra，并计算 `gene_spectra_score`。
+
+### 5.3 density threshold 的选择
+
+cNMF 原方法建议查看 local-density histogram 和 clustergram 后选择 \(\tau\)。在数千个 tumour-K 组合中不能逐个主观调参。
+
+本 SOP 的操作顺序：
+
+1. 按 study、平台和 tumour cell count 选择 low/medium/high 三档代表样本。
+2. 先用 `density_threshold=2.0` 生成不做 density filtering 的诊断结果。
+3. 在 pilot 中选择一个 study-level \(\tau\)，并在全 study 冻结。
+4. 预声明至少一个较宽松和一个较严格的 sensitivity threshold。
+5. 不允许针对单个 tumour 因结果“不好看”而手调 \(\tau\)。
+
+不存在适合所有 studies 的已验证统一 \(\tau\)。
+
+### 5.4 run-level QC
+
+每个 tumour-K 必须记录：
+
+- 收敛/未收敛 replicate 数。
+- reconstruction error。
+- unfiltered consensus silhouette。
+- density filtering 前后 spectra 数。
+- 每个 consensus cluster 的 replicate/seed 支持数。
+- K-means 是否产生少于 K 个有效 distinct clusters。
+- usage 与 `n_counts`、`n_genes`、`pct_mito`、doublet score 的相关。
+- 每个 GEP 的有效使用细胞数和 usage 分布。
+
+若 filtering 后 spectra 少于 K、K-means 失败或多个 consensus clusters 由极少 seeds 支持，该 tumour-K 标记为 failed，不通过降低 QC 标准强行产生 K 个 GEP。
+
+### Gate 5
+
+- 所有保留 tumour-K 均有完整 spectra、usage 和 run metrics。
+- failed runs 有明确原因，且未静默丢失。
+- density threshold 和 seed 未根据生物学标签反向调整。
+
+### 输出
+
+- `cnmf/<tumour>/k_<K>/consensus_spectra.*`
+- `cnmf/<tumour>/k_<K>/spectra_tpm.*`
+- `cnmf/<tumour>/k_<K>/gene_spectra_score.*`
+- `cnmf/<tumour>/k_<K>/usage_normalized.*`
+- `cnmf/<tumour>/k_<K>/usage_raw.*`
+- `cnmf/cnmf_run_metrics.tsv`
+
+---
+
+## Stage 6：定义并质控 tumour-level programs
+
+### 6.1 program ID
+
+使用不会因排序变化而冲突的 ID：
+
+```text
+<study_id>__<patient_id>__<tumour_id>__K<K>__GEP<index>
+```
+
+同时保存 source file、K、consensus cluster、cell count 和 cNMF parameters。
+
+### 6.2 两套 top-gene list
+
+每个 GEP 均生成：
+
+1. `marker_top50`：`gene_spectra_score` 中最高的 50 个正向基因；主分析使用。
+2. `basis_top50`：HVG consensus spectrum 中权重最高的 50 个基因；Gavish-compatible sensitivity 使用。
+
+还要保存完整连续向量，不能只保留 top-50。
+
+如果可用 marker 少于 50、存在重复 symbol 或两套 top-50 极不一致，标记为 warning 并保留原因。
+
+### 6.3 technical program flags
+
+对每个 GEP 计算：
+
+- mitochondrial genes 比例。
+- ribosomal protein genes 比例。
+- immediate-early/dissociation genes，例如 `FOS/JUN/IER/EGR1/ATF3`。
+- heat-shock、unfolded protein response。
+- immune/stromal lineage markers，检查 malignant-doublet 或 ambient contamination。
+- usage 与 QC covariates 的相关。
+- 最高 usage 细胞是否集中于一个 batch、library、region 或低质量 cluster。
+
+Stress program 不应自动删除；应标记为 `stress_possible_dissociation`，并通过跨平台、空间或独立实验判断其生物学成分。
+
+### Gate 6
+
+- top-gene symbol 唯一且来源可追溯。
+- technical flags 完整。
+- 未仅凭功能名称人工删除“不喜欢”的 program。
+
+### 输出
+
+- `programs/programs.tsv`
+- `programs/marker_top50.tsv`
+- `programs/basis_top50.tsv`
+- `programs/program_qc.tsv`
+
+---
+
+## Stage 7：筛选 robust programs
+
+主分析使用 `marker_top50`；用 `basis_top50` 完整重复一次作为敏感性分析。
+
+### 7.1 瘤内跨 K 稳定
+
+对同一 tumour 的所有 programs 计算 top-50 gene overlap。一个 program 必须与**另一个 K** 的 program 至少共享 35/50 个基因。
+
+- 文献阈值：`intra_min = 35`。
+- 本 SOP 明确要求匹配来自不同 K；Gavish 公开函数只按 sample 分组，未在代码中显式检查 rank。
+- 记录最佳匹配 K、overlap 和 Jaccard。
+
+### 7.2 跨 tumour 复现
+
+候选 program 必须与另一个 tumour 的某个 program 至少共享 10/50 个基因。
+
+- 文献阈值：`inter_min = 10`。
+- 推荐要求另一个 tumour 来自不同 `patient_id`。
+- 同一患者多区域复现单独标为 within-patient support，不能代替 independent-patient support。
+- atlas 模式进一步报告是否有 independent-study support，但不在看结果后临时改变门槛。
+
+### 7.3 瘤内去冗余
+
+在每个 tumour 内：
+
+1. 按每个 program 与其他 tumours 的最大 overlap 从高到低排序。
+2. 保留跨 tumour 支持最强的 program。
+3. 依次检查其余 programs 与已保留 programs 的 overlap。
+4. 采用公开代码时，仅当 overlap `>10` 才移除；采用 Methods 文字时，overlap `>=10` 即移除。
+5. 主分析必须在配置中固定一种边界；另一种作为 sensitivity。
+
+### 7.4 不允许的做法
+
+- 不根据功能注释改变 35/10 阈值。
+- 不强迫每个 tumour 留下固定数量 programs。
+- 不把只在一个患者出现但很“有趣”的 program 直接升级为 recurrent program。
+
+### Gate 7
+
+- 每个保留 program 有跨 K 和 independent-tumour 证据。
+- 所有被移除 program 有 machine-readable reason。
+- marker-list 与 basis-list 两条分析的差异已报告。
+
+### 输出
+
+- `robust/robust_programs.tsv`
+- `robust/removed_programs.tsv`
+- `robust/program_overlap_matrix.*`
+- `robust/marker_vs_basis_sensitivity.md`
+
+---
+
+## Stage 8：跨 tumour 聚类、图结构与候选 MPs
+
+> [!warning] 方法地位
+> Stage 8a 是 Gavish-style reference。Stage 8b weighted Leiden 和 Stage 8c residual absorption 是本 SOP r2 的 experimental extensions；pilot 通过前不得取代 8a 成为主分析。
+
+### 8.1 共用 similarity
+
+对两个 top-50 gene sets 计算：
+
+\[
+I(A,B)=|A\cap B|
+\]
+
+\[
+J(A,B)=\frac{|A\cap B|}{|A\cup B|}=\frac{I}{100-I}
+\]
+
+Gavish 的聚类判断使用 shared-gene count。图分支第一版在 `I>=10` 时建立 active edge，并以未经变换的 Jaccard 作为 edge weight。`I=10` 对应 `J=10/90≈0.111`。主图使用 `marker_top50`；必须以独立输出完整重复 `basis_top50`，并做 top-30/50/100 sensitivity。
+
+### 8.2 Stage 8a：Gavish-style greedy reference
+
+固定参数：
+
+- `Min_intersect_initial = 10`
+- `Min_intersect_cluster = 10`
+- `Min_group_size = 5`
+
+步骤：
+
+1. 输入 Stage 7 的 recurrent robust programs。
+2. 对每个 program 统计与其 overlap >=10 的其他 programs 数。
+3. 选择邻居数最多且有多于 5 个邻居的 program 作为 founder。
+4. 加入与 founder/current MP overlap 最大且至少为 10 的 program。
+5. 每加入一个 program，统计簇内每个基因出现频率。
+6. 按出现频率选前 50 个基因；第 50 位并列时按簇内 NMF/cNMF gene score 打破。
+7. 继续吸收与更新后的 MP top-50 overlap >=10 的 programs。
+8. 无可加入 program 时封闭该簇，移除簇内 programs，再寻找下一 founder。
+9. 不满足最小簇条件的 programs 作为 residual programs 保存，不删除。
+
+### 8.3 Stage 8b：weighted graph consensus（experimental）
+
+#### 8.3.1 两种 graph mode
+
+| Mode | Node set | 唯一可回答的问题 |
+| --- | --- | --- |
+| `recurrent_graph` | 与 8a 完全相同的 Stage 7 recurrent robust programs | 固定 nodes 后，更换 clustering algorithm 是否改善稳定性？ |
+| `landscape_graph` | 由 Stage 6 programs 在每个 tumour 内折叠得到、尚未执行 cross-tumour 删除的 local GEPs | recurrent、context-restricted 和 isolated topology 如何分布？ |
+
+只有 `recurrent_graph` 与 8a 的比较是 clustering-only ablation。`landscape_graph` 改变了 node set，不能单独用于宣称 Leiden 优于 greedy。
+
+#### 8.3.2 构建 landscape local GEPs
+
+对每个 tumour 独立执行：
+
+1. 输入所有通过 Stage 6 run/program QC 的 K=4–9 consensus GEPs。
+2. 计算 top-50 overlap；不同 K 的 pair 使用距离 `50 - overlap`，同一 K 的 pair 固定为距离 50，禁止同 rank factors 被折叠为 cross-K support。
+3. primary grouping 使用 complete-linkage，在 height 15 切分；因此一个 multi-member group 的任意成员来自不同 K，且均满足 overlap >=35/50。分组算法和 tie rule 必须预声明。
+4. 按组内成员中每个基因的出现频率形成 local consensus top-50；边界并列按成员的平均连续 marker score 打破。
+5. 保存组内平均 Jaccard 最高的实际 GEP 为 `medoid_program_id`，用于 provenance 和 usage 追溯；singleton 的 medoid 定义为它自身。
+6. 至少两个不同 K 支持的 node 标记 `cross_k_supported=true`，可参与 core module discovery。
+7. 只有一个 K 支持的 factor 仍保留为 `single_k_support` landscape node，但不能成为 core module founder；它只能作为 residual/query node 被软映射。
+8. local-grouping sensitivity 固定使用同一 complete-linkage，将 cut height 改为 12 和 18，分别要求 all-pair overlap >=38 和 >=32；报告 multi-K groups、single-K nodes 和下游 landscape modules 的变化。
+9. 禁止用 single linkage 构造 local GEP groups，因为一串 pairwise bridges 会把彼此不相似的瘤内状态链式合并。average linkage 只能作为二阶 exploratory sensitivity。
+
+不得直接把每个 tumour 的全部 39 个 factors 当作全局 graph nodes，否则同一状态在多个 K 的重复表示会人为增加该 tumour 的网络权重。
+
+#### 8.3.3 panel eligibility
+
+跨 study 的 non-overlap 可能来自 gene panel 不一致，而不是状态不存在。对 program \(A\) 和目标 study \(s\) 计算：
+
+\[
+E(A,s)=\frac{|top50(A)\cap eligible\_genes(s)|}{50}
+\]
+
+- `marker_top50` 的 eligible universe 是该 study 中经过统一 ID 映射、可用于 all-gene refit 的 genes。
+- `basis_top50` 的 eligible universe 是该 study 的冻结 HVG panel，因此更容易受到结构性限制。
+- primary operational flag 为 `E<0.8 -> cross_study_panel_limited`；同时报告 0.6、0.8、0.9 sensitivity。
+- panel-limited non-edge 不能被解释为生物学缺失，也不能支持 `cohort_restricted` claim。
+- 主图仍使用原始 Jaccard；panel-aware Jaccard 作为 sensitivity，不能静默替换。
+
+#### 8.3.4 构图
+
+对每个 graph mode：
+
+1. 节点携带 `patient_id`、`tumour_id`、`study_id`、platform、cancer type、K support、bootstrap 和 technical flags。
+2. primary graph 仅当 top-50 overlap >=10 时保留边，`weight=Jaccard`；另建 overlap >=5 和 >=15 的 sensitivity views。
+3. 只有不同 `patient_id` 的边设置 `active_for_clustering=true`。
+4. 同一患者多区域/多时间点边保存为 diagnostic edges，但不提供 independent recurrence。
+5. 无边节点必须保留，不能因 graph library 默认行为而丢失。
+6. 第一版不做 inverse-frequency weighting、连续 spectrum 混合或其他 edge transform；这些单独做 sensitivity。
+
+Edge-threshold sensitivity 固定为 5、10、15。每个 threshold 都运行完整且相同的 resolution grid，但以 `(overlap=10, resolution=0.10)` modules 为基准，在相同 resolution 上按 node-set Jaccard 匹配其他 threshold 的 modules。不得为每个 threshold 重新挑一个最有利的 resolution。必须报告 module recovery、singleton 数和 technical-module rate。对只在 threshold 5 出现的 edges，另报告 shared genes 中 mitochondrial、ribosomal、stress 和 housekeeping genes 的贡献比例，检查低阈值 hub inflation；四类 gene lists 必须在查看结果前版本化并冻结。
+
+若同一患者贡献多个 tumour/region/time-point nodes，primary graph 仍保留全部 nodes，以确保 `recurrent_graph` 与 8a node set 完全相同。另做固定的 within-patient dedup sensitivity：
+
+1. 在同一患者内用 complete-linkage 折叠 pairwise overlap >=10 的 nodes；该阈值不随 5/10/15 edge sweep 改变。
+2. 每组代表按 primary overlap>=10 edges 的 `平均跨患者 edge weight 最高 -> malignant-cell count 最大 -> node_id` 选择；无跨患者边时平均权重定义为 0。
+3. 在 primary edge threshold 10、resolution 0.10 和 100 seeds 下重跑 Leiden。
+4. 报告 module top-50 Jaccard、membership 改变和每个 module 的最大单患者 node share。
+
+#### 8.3.5 Leiden-CPM 与 consensus
+
+固定 experimental defaults：
+
+- algorithm：weighted Leiden。
+- objective：Constant Potts Model（CPM）。
+- resolution grid：`0.02, 0.05, 0.10, 0.20, 0.40, 0.80, 1.60`。
+- provisional primary resolution：`0.10`；必须在查看生物学 annotation 前用 pilot 冻结或按 deviation 流程修改。
+- 每个 resolution：100 个 deterministic recorded seeds。
+- consensus threshold：pairwise co-clustering probability `Pij >=0.80`。
+
+每个 edge-threshold view 都在完整 resolution grid 上分别执行：
+
+1. 在对应 weighted graph 上运行 100 次 Leiden。
+2. 计算所有 node pairs 的 co-clustering matrix \(P\)。
+3. 对 `1-P` 做 complete-linkage，在 0.20 切分，形成 seed-consensus modules。
+4. 每个 module 按成员 local/program top lists 中的 gene frequency 形成 consensus top-50；边界并列按成员连续 marker score 的平均值打破，并保存完整 frequency/score table。
+5. 报告 `edge threshold × resolution × module count × singleton count × size distribution × stability`，不得只展示一个“好看”的组合。
+6. primary resolution 的 candidate recurrent MP 暂定至少由 3 个 independent patients 支持；atlas-level 标签还需至少 2 个 independent studies。
+7. singleton 和 dyad 不删除，标记为 `landscape_restricted` 或 `insufficient_recurrence`。
+
+上述 3-patient、2-study、0.80 和 resolution defaults 均为 proposed operational parameters，不是 Leiden 或 Gavish 的发表标准。
+
+#### 8.3.6 bridge 与 soft membership
+
+在 provisional primary resolution 的 co-clustering matrix 中，定义 node-to-module affinity 为该 node 与 module core members 的平均 \(P_{ij}\)。若一个 node 对两个 modules 的 affinity 均在 0.40–0.60，且两者差值 <=0.10，则标记 `bridge`：
+
+- 保留两个 soft affinities。
+- 不强迫其进入一个 hard biological category。
+- 检查其是否为 K 太低导致的 mixed factor、doublet、technical mixture 或真实 shared program。
+
+### 8.4 Stage 8c：Leiden core + dynamic-consensus absorption（optional）
+
+这是与 8a、8b 分开的第三个实验臂：
+
+1. 固定 8b 的 seed-consensus core modules，不重新优化其 core membership；另存 immutable core consensus。
+2. 对全部 residual/singleton nodes 与当前 module dynamic consensus top-50 计算 overlap。
+3. 每轮选择全局最大 residual-module overlap；按 `overlap descending -> node_id -> module_id` 做 deterministic tie-break。
+4. 唯一最佳 overlap >=10 时标记为 `peripheral_absorbed`，随后更新 expanded module consensus 并重新计算剩余 pairs。
+5. 同一 node 对多个 modules 并列或差异低于预声明 tie tolerance 时保留为 bridge，不强迫归属。
+6. 最大 overlap <10 时停止，未分配 nodes 原样保留。
+7. `single_k_support` 和 panel-limited node 即使被吸收，也不能增加 core patient/study support 计数。
+8. 8b core partition/core consensus 与 8c expanded membership/consensus 必须分别保存。
+
+### 8.5 common、context-restricted 与 singleton 描述
+
+每个 module/node 至少报告：
+
+- programs、independent patients、tumours、studies、platforms 和 cancer types 数。
+- eligible-tumour coverage。
+- 最大单一 study/patient 占比。
+- normalized study 和 cancer-type diversity entropy。
+- context enrichment；permutation 必须保持每个 tumour 的 program 数和 study/cancer-type 结构。
+- cell-bootstrap、tie/seed、resolution 和 leave-one-study-out stability。
+
+推荐标签：
+
+| 标签 | 最低解释 |
+| --- | --- |
+| `pan_cohort_recurrent` | 多患者、多 context、稳定且无单 study 支配 |
+| `context_restricted` | 多个 independent patients 复现，但显著集中于特定 cancer/lineage/context |
+| `landscape_restricted` | singleton/dyad 或支持不足；只表示当前 cohort 的拓扑位置 |
+| `technical_or_uncertain` | 由 QC、stress、doublet、panel limitation 或不稳定性更好解释 |
+
+不得把低 degree、孤立位置或当前 cohort 未检出直接写成 sample-specific biology。
+
+### 8.6 graph 与 greedy 公平比较
+
+在 `recurrent_graph` 的相同 node set 上比较 8a 与 8b；公平比较臂的 edge threshold 固定为 10，5/15 仅属于 graph 内部 sensitivity：
+
+- jointly assigned nodes 的 adjusted Rand index / normalized mutual information。
+- greedy MP 与 graph module 的 consensus top-50 Jaccard。
+- split、merge、unassigned 和 bridge ledger。
+- cell bootstrap 后 membership/co-clustering stability。
+- leave-one-tumour 和 leave-one-study-out stability。
+- Gavish 41 MP recovery。
+- technical-module purity 和 context-specific retention。
+
+只有 graph branch 在预声明指标上总体优于或补充 8a，才能在后续版本升级为主分析。不能依据网络图视觉效果选胜者。
+
+### 8.7 shared cluster-level QC
+
+所有候选 MP 至少报告：
+
+- member programs 和 independent patients 数。
+- tumours、studies、platforms 和 cancer types 数。
+- 是否被单一 study 或单一大样本支配。
+- mitochondrial/ribosomal enrichment。
+- 与非恶性 cell-type signatures 的相似度和 doublet 风险。
+- stress/dissociation 风险。
+- marker-top50 与 basis-top50 结果的一致性。
+- panel eligibility、resolution 和 membership stability。
+- 每个成员与本 module consensus top-50 的 overlap；`<10` 时标记 `weak_core_member`，但不从 partition 自动删除。
+- 同时报告包含和排除 weak-core members 时的 module summary；不得用循环重算 consensus 的方式修剪到想要的结果。
+- 每个 module 的最大单患者 node share 和 within-patient dedup sensitivity。
+
+只有单 study 支持的簇标记为 `study_specific_candidate`，不能与跨研究 MP 等级相同。
+
+### Gate 8
+
+- 8a reference 已完整运行，MP 数量自然产生且不强制为 41。
+- 8b/8c 被明确标记为 experimental，且没有用 landscape graph 冒充 clustering-only comparison。
+- local GEP folding、graph nodes、edges、isolates、residuals 和 bridge nodes 均可追溯。
+- graph resolution curve、edge threshold 5/10/15、local cut 12/15/18、100-seed consensus、panel eligibility 和 leave-one-study-out 已报告。
+- within-patient dedup、weak-core summary 和 threshold-5 technical-edge diagnostics 已报告，且未覆盖主 partition。
+- candidate recurrent MP 至少达到预声明 patient/study 支持；restricted nodes 没有被过度命名。
+- 技术簇的移除依据预声明规则，而不是生物学偏好。
+
+### 输出
+
+- `programs/local_geps.tsv`
+- `programs/local_gep_membership.tsv`
+- `mp/meta_programs.tsv`
+- `mp/mp_membership.tsv`
+- `mp/mp_top50.tsv`
+- `mp/residual_programs.tsv`
+- `mp/cluster_stability.tsv`
+- `network/recurrent_graph_nodes.tsv`
+- `network/landscape_graph_nodes.tsv`
+- `network/graph_edges.tsv`
+- `network/panel_eligibility.tsv`
+- `network/resolution_sweep.tsv`
+- `network/coclustering_matrix.*`
+- `network/graph_modules.tsv`
+- `network/landscape_singletons.tsv`
+- `network/bridge_nodes.tsv`
+- `network/patient_dedup_sensitivity.tsv`
+- `network/weak_core_members.tsv`
+- `network/graph_vs_greedy_match.tsv`
+
+---
+
+## Stage 9：重新给所有细胞打 MP 分数
+
+原始 cNMF usage 只对应某个 tumour、某个 K 的局部因子。最终 MP 定义后，应使用统一 50-gene signature 给所有相关恶性细胞重新打分。
+
+### 9.1 scoring 要求
+
+- 使用同一个预声明 scoring implementation，例如 `scalop::sigScores` 或经过验证的等价 control-gene score。
+- 输入使用 per-cell normalized、适合 signature scoring 的表达矩阵，而不是 cNMF variance-scaled raw counts。
+- control genes 按平均表达匹配，避免高表达 signature 天然得高分。
+- 每个 MP 至少有足够 signature genes 在数据中；Gavish 的公开分布代码默认要求至少 25/50。
+- 保存连续 score，不只保存二元阳性。
+- `score > 1` 只有在严格复现相同 scoring 函数和尺度时才可使用；不能跨方法照搬阈值。
+
+### 9.2 detection 与 average expression 分开
+
+- `MP detected in tumour`：该 tumour 有一个 robust local program 进入该 MP。
+- `mean MP score`：该 tumour 所有恶性细胞的平均 signature score。
+- `MP prevalence`：超过预定义 null/threshold 的细胞比例。
+- `MP heterogeneity`：同一 tumour 内 score 的 dispersion。
+
+四者不是同一个量。
+
+### 输出
+
+- `scores/cell_mp_scores.*`
+- `scores/tumour_mp_summary.tsv`
+
+---
+
+## Stage 10：判定 ITH、lineage/baseline 与 technical programs
+
+> [!warning] 本 SOP 新增
+> Gavish 主要以 robust NMF detection 表示可变程序。本 SOP 进一步要求直接量化 final MP score/usage 的瘤内变化。这是 proposed extension。
+
+### 10.1 每个 tumour-MP 的描述指标
+
+至少计算：
+
+- median、IQR、MAD。
+- `q90 - q10`。
+- 高分和低分细胞比例；阈值由 matched-control/null 或预声明 scoring scale 决定。
+- 与 `n_counts`、`n_genes`、`pct_mito`、cell-cycle、doublet score 的相关。
+- 不同 batch、region、CNA subclone 的分布。
+- cell bootstrap 后以上指标的置信区间。
+
+不要把均值接近 0 时不稳定的 CV 作为唯一 dispersion 指标。normalized cNMF usage 是 compositional data，也不能把 program 间负相关直接解释为生物学拮抗。
+
+### 10.2 暂定分类
+
+| 分类 | 证据模式 |
+| --- | --- |
+| `recurrent_ITH` | 多个 independent tumours 中均有稳定的 within-tumour dispersion；bootstrap 复现；不能由 QC/batch 解释 |
+| `context_dependent_ITH` | 只在特定癌种/lineage 的多个 tumours 内表现为 ITH |
+| `intertumour_or_lineage` | tumour 间平均差异大，但各 tumour 内近似恒定 |
+| `ubiquitous_baseline` | 大多数细胞均匀使用，缺少明确瘤内高低状态 |
+| `technical_or_uncertain` | 与 depth、mitochondrial、dissociation、doublet 或 batch 高度一致 |
+
+分类阈值必须在 pilot 中冻结。未冻结前报告连续指标，不做事后二分。
+
+### 10.3 cell bootstrap
+
+每个 primary-discovery tumour：
+
+1. 无放回抽取 80% 恶性细胞。
+2. 完整重跑该 tumour 的 cNMF K-grid 和 program matching。
+3. 至少重复 10 次。
+4. 记录原 program 是否有匹配项、top-50 Jaccard、usage correlation 和 MP assignment。
+
+可用的**暂定 pilot gate**是：至少 8/10 bootstraps 找到匹配 program，且 median top-50 Jaccard >=0.5。该门槛不是发表标准，必须在模拟或 pilot 中检查灵敏度。
+
+### 10.4 变异分解
+
+对于每个 final MP，可用描述性 mixed-effects model 或方差分解估计：
+
+- between-tumour variation。
+- within-tumour residual variation。
+- study/platform/batch contribution。
+- technical covariate contribution。
+
+单细胞不能被当作独立患者扩大显著性。统计推断的 biological replicate 应是 patient/tumour，细胞层模型需使用层级结构或 tumour-level summary。
+
+### Gate 10
+
+- 每个被称为 ITH 的 MP 都有直接 within-tumour dispersion 证据。
+- 结果不只依赖一个细胞很多的 tumour。
+- bootstrap 和技术相关性完整报告。
+
+### 输出
+
+- `ith/ith_metrics.tsv`
+- `ith/bootstrap_stability.tsv`
+- `ith/mp_classification.tsv`
+- `ith/variance_partition.tsv`
+
+---
+
+## Stage 11：功能注释和参考映射
+
+### 11.1 gene-set enrichment
+
+使用预声明版本的 MSigDB：
+
+- Hallmark `H`
+- Gene Ontology `C5`
+- Cell Type Signature `C8`
+- 需要时加入组织/癌种特异签名
+
+使用 hypergeometric test 或其他预声明方法，并做 BH-FDR。背景基因应是该分析中有机会进入 top list 的 eligible gene universe，不应默认使用全基因组。
+
+MP 名称综合：
+
+- top genes。
+- 显著 enrichments。
+- member tumours/cancer types。
+- cell-level usage pattern。
+- 已有文献和参考 MP。
+
+不要只依据一个富集 term 自动命名。
+
+### 11.2 映射 Gavish 41 MPs
+
+对本分析 MP top-50 与 Gavish Supplementary Table 2 的 41 个 top-50 lists 计算：
+
+- shared genes。
+- Jaccard。
+- best 和 second-best match。
+- cancer-type/context support。
+
+建议标签：
+
+- `known_match`：有清晰、一致的最佳参考 MP。
+- `split_or_merge`：一个新 MP 对应多个参考 MP，或反之。
+- `candidate_novel`：无充分匹配且跨患者/研究稳定。
+- `uncertain`：支持不足或技术风险高。
+
+“candidate novel”不等于新生物学发现，仍需要独立数据和正交验证。
+
+### 11.3 regulator 分析（可选）
+
+可使用 SCENIC/pySCENIC 等推断 regulon。Gavish 使用的候选标准包括相关绝对值 >0.5、FDR 校正和跨多个 samples 复现。无论阈值如何，regulon correlation 只能称为 candidate regulator association，不能称为已证实调控。
+
+### 输出
+
+- `annotation/enrichment.tsv`
+- `annotation/reference_mp_mapping.tsv`
+- `annotation/mp_names.tsv`
+- `annotation/regulon_associations.tsv`（可选）
+
+---
+
+## Stage 12：正交验证与下游迁移
+
+### 12.1 优先验证顺序
+
+1. independent study 复现。
+2. leave-one-study-out MP 稳定性。
+3. 不同 scRNA-seq platform 复现。
+4. spatial transcriptomics/IMC/CODEX/IHC 验证状态共定位。
+5. perturbation 或 lineage tracing 验证调控和因果。
+
+### 12.2 bulk、空间和 cfRNA
+
+- Visium spot 可以做 MP signature score，但一个 spot 通常混合多个细胞。
+- bulk tissue 和 cfRNA 只能反映平均 MP signal、tumour fraction 和细胞组成的混合。
+- bulk/cfRNA 中 MP score 上升不能直接说明瘤内异质性增加。
+- 临床分析的 replicate 是患者；不能用多个 genes 或 cells 制造样本量。
+
+---
+
+## Stage 13：完成分析前的 release gate
+
+必须全部回答“是”：
+
+- [ ] raw counts、metadata、gene mapping 和 checksum 已冻结。
+- [ ] malignant annotation 有多层证据，doublets 已处理。
+- [ ] tumour eligibility 与排除理由完整。
+- [ ] HVG/SD 在 calibration unit 上冻结，未逐 tumour 偷换参数。
+- [ ] cNMF 版本、K、R、loss、seed、density threshold 已记录。
+- [ ] failed runs 没有静默丢失。
+- [ ] marker_top50、basis_top50、完整 spectra 和 usage 均保存。
+- [ ] cross-K、cross-patient 和 non-redundancy 映射可追溯。
+- [ ] MP 数量由数据产生，没有强制为 41。
+- [ ] 8a greedy reference 已运行；8b/8c 若运行，experimental 状态、node set 和比较轴已注明。
+- [ ] Graph isolates、bridge、resolution sweep、panel eligibility 和 graph-vs-greedy comparison 已完整保存。
+- [ ] technical/stress/doublet flags 完整。
+- [ ] 所有 ITH 声称有 within-tumour dispersion 和 bootstrap 支持。
+- [ ] leave-one-study-out 或 independent-study 验证已完成，或明确标为待办。
+- [ ] bulk/cfRNA 结果没有被写成直接 ITH 测量。
+- [ ] 所有 proposed thresholds 与文献参数已清楚区分。
+
+质量控制的详细解释见 [3. 质量控制与解释边界](meta-quality.qmd)；项目目录、配置和伪代码见 [4. 实施资源与伪代码](meta-resources.qmd)。

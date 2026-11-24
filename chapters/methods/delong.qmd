@@ -1,0 +1,3 @@
+# DeLong 检验：比较相关 ROC 曲线的 AUC
+
+> Compares AUCs of two or more correlated ROC curves.

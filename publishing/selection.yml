@@ -1,0 +1,27 @@
+methods:
+  - [Statistics/DeLong's test for AUC.md, delong]
+  - [Statistics/sc-MetaPrograms/0. 总览.md, meta-overview]
+  - [Statistics/sc-MetaPrograms/1. 原理与设计决策.md, meta-principles]
+  - [Statistics/sc-MetaPrograms/2. 分析SOP.md, meta-workflow]
+  - [Statistics/sc-MetaPrograms/3. 质量控制与解释边界.md, meta-quality]
+  - [Statistics/sc-MetaPrograms/4. 实施资源与伪代码.md, meta-resources]
+  - [Statistics/sc-MetaPrograms/5. 项目运行记录模板.md, meta-template]
+reads:
+  - [single-cell-long-read-transcriptomics-giag082-20261123, single-cell-long-reads]
+  - [transgram-14e786661454, transgram]
+  - [nano-id-b97669c8380c, nano-id]
+  - [nmd-096af3d6d648, nmd]
+  - [spatiotemporal-rna-interactions-02b970cf5a73, rna-in-space-and-time]
+atlas:
+  - [single-cell-protocol-bias-d2ba52096aa9, protocol-bias]
+  - [spatial-segmentation-benchmark-93e607b61ac3, spatial-segmentation]
+  - [gesso-spatial-pathway-f5774859d6a5, spatial-pathways]
+  - [spatial-cell-communication-b9adbdd7e75b, spatial-communication]
+  - [image-based-profiling-fb14ddb09648, image-profiling]
+  - [ssstici-single-cell-variant-imputation-20261122, single-cell-imputation]
+  - [thbs1-adipose-e6ee211171de, adipose-atlas]
+genetics:
+  - [whole-blood-transcriptomics-atlas-24b0dc48b3cc, blood-atlas]
+  - [tenk10k-10721-2, cell-specific-variants]
+  - [caqtl-11173-4, cell-abundance-qtl]
+  - [twas-direction-13ad137e81cd, twas-directions]

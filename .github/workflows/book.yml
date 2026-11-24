@@ -1,0 +1,93 @@
+name: Build and publish book
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 23 * * *'
+  workflow_dispatch:
+
+permissions: {}
+concurrency:
+  group: bioinfo-book-pages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      build: ${{ steps.prepare.outputs.build }}
+      revision: ${{ steps.prepare.outputs.revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Read the two source sections
+        if: github.event_name != 'push'
+        uses: actions/checkout@v4
+        with:
+          repository: loganylchen/vault
+          ref: main
+          ssh-key: ${{ secrets.VAULT_READ_KEY }}
+          persist-credentials: false
+          path: .source
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /Statistics/
+            /References/公众号解读/
+      - name: Build publication tree
+        if: github.event_name != 'push'
+        run: |
+          python3 -m venv "$RUNNER_TEMP/publish-env"
+          "$RUNNER_TEMP/publish-env/bin/pip" install --disable-pip-version-check PyYAML==6.0.3
+          "$RUNNER_TEMP/publish-env/bin/python" publishing/sync.py .source
+      - id: prepare
+        run: |
+          git add -A -- chapters _quarto.yml
+          if ! git diff --cached --quiet; then
+            git -c user.name='bioinfo-book publisher' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'Sync selected book chapters'
+            git push origin HEAD:main
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" != schedule ]]; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'No publication changes.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  render:
+    needs: prepare
+    if: needs.prepare.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.revision }}
+          persist-credentials: false
+      - uses: actions/configure-pages@v5
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.8.27
+      - run: quarto render
+      - run: python3 publishing/check.py
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _book
+
+  deploy:
+    needs: render
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.site.outputs.page_url }}
+    steps:
+      - id: site
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,65 @@
+project:
+  type: book
+  output-dir: _book
+lang: zh
+book:
+  title: 生物信息学手记
+  author: Yuelong Chen
+  site-url: https://loganylchen.github.io/bioinfo-book/
+  repo-url: https://github.com/loganylchen/bioinfo-book
+  output-file: bioinfo-book
+  downloads:
+  - epub
+  favicon: mark.svg
+  search: true
+  sidebar:
+    style: docked
+    collapse-level: 1
+  page-footer:
+    left: 生物信息学手记 · Bioinformatics Fieldnotes
+    right: '[图版与授权](https://loganylchen.github.io/bioinfo-book/rights.html)'
+  chapters:
+  - index.qmd
+  - part: 统计方法与分析工作流
+    chapters:
+    - chapters/methods/delong.qmd
+    - chapters/methods/meta-overview.qmd
+    - chapters/methods/meta-principles.qmd
+    - chapters/methods/meta-workflow.qmd
+    - chapters/methods/meta-quality.qmd
+    - chapters/methods/meta-resources.qmd
+    - chapters/methods/meta-template.qmd
+  - part: 测序、读段与转录本
+    chapters:
+    - chapters/reads/single-cell-long-reads.qmd
+    - chapters/reads/transgram.qmd
+    - chapters/reads/nano-id.qmd
+    - chapters/reads/nmd.qmd
+    - chapters/reads/rna-in-space-and-time.qmd
+  - part: 单细胞与空间图谱
+    chapters:
+    - chapters/atlas/protocol-bias.qmd
+    - chapters/atlas/spatial-segmentation.qmd
+    - chapters/atlas/spatial-pathways.qmd
+    - chapters/atlas/spatial-communication.qmd
+    - chapters/atlas/image-profiling.qmd
+    - chapters/atlas/single-cell-imputation.qmd
+    - chapters/atlas/adipose-atlas.qmd
+  - part: 人群遗传与疾病证据
+    chapters:
+    - chapters/genetics/blood-atlas.qmd
+    - chapters/genetics/cell-specific-variants.qmd
+    - chapters/genetics/cell-abundance-qtl.qmd
+    - chapters/genetics/twas-directions.qmd
+  - rights.qmd
+execute:
+  enabled: false
+format:
+  html:
+    theme: cosmo
+    css: book.css
+    toc-depth: 2
+    link-external-newwindow: true
+    code-overflow: wrap
+  epub:
+    toc-depth: 2

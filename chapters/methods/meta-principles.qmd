@@ -1,0 +1,244 @@
+# 原理与设计决策
+
+## 1. 科学问题
+
+目标不是把恶性细胞硬聚成几个亚群，而是把每个细胞表示成多个可同时使用的 gene expression programs（GEPs）：
+
+\[
+C \approx U G
+\]
+
+其中：
+
+- \(C\)：`cells × genes` 的非负表达矩阵。
+- \(U\)：`cells × K` 的 program usage；一个细胞可以同时使用多个 programs。
+- \(G\)：`K × genes` 的 program spectrum。
+- \(K\)：要求模型使用的 program 数目。
+
+一个 tumour 的 cNMF 结果仍然只是 tumour-level GEPs。只有多个独立 tumours 的相似 GEPs 被合并后，才形成 meta-program（MP）。
+
+## 2. cNMF 解决什么问题
+
+普通 NMF 是非凸优化；同一矩阵、同一个 K、不同初始值可能得到不同局部最优解。Kotliar et al. 2019 的 cNMF 对每个 K 重复 NMF，再对因子本身做 consensus：
+
+1. 对同一矩阵和固定 K 运行 \(R\) 次 NMF，通常 `R=100`。
+2. 每次得到 K 个 spectra，总计 \(R K\) 个候选因子。
+3. 将每个 spectrum 做 L2 normalization，消除 NMF 的任意尺度。
+4. 根据到最近邻 spectra 的平均欧氏距离过滤离群因子。
+5. 将剩余 spectra 用 K-means 聚成 K 簇。
+6. 每簇逐基因取中位数，得到 K 个 consensus spectra。
+7. 固定 spectra，以 non-negative least squares 重新拟合每个细胞的 usage。
+8. 将 consensus usages 固定，在 TPM 和全部基因上重新拟合 spectra。
+9. 用多元 OLS 将 z-scored TPM 同时回归到全部 usages，得到 program-specific `gene_spectra_score`。
+
+cNMF 的 robust 含义是：
+
+> 固定 K 时，换随机初值仍得到相似因子。
+
+它不会自动证明该因子在换一批细胞、换患者或换研究后仍存在。
+
+## 3. cNMF 的预处理原则
+
+### 3.1 原论文与当前实现的核心步骤
+
+以 raw count matrix \(C\) 为起点：
+
+1. 过滤低质量细胞和低检出基因。
+2. 用 per-cell normalized TPM/CPM 识别 overdispersed genes；默认数量通常为 2,000。
+3. 回到这些基因的 raw counts。
+4. 每个基因除以自己的标准差，但不减均值：
+
+\[
+\widetilde C_{ij}=\frac{C_{ij}}{\operatorname{SD}(C_j)}
+\]
+
+这不是 z-score。因为没有减均值，\(\widetilde C\) 仍然非负，NMF 不需要 clipping。
+
+### 3.2 明确不做的事情
+
+- 不做 gene mean centering。
+- 不产生负值。
+- 不把负值截为 0。
+- 原始 cNMF 在 factorization 前不做 cell library-size normalization；测序深度主要由 usage 的整体尺度吸收，高深度细胞在拟合中权重更大。
+- 不对 NMF 输入做 log transformation。
+
+TPM 主要用于 HVG 识别、最终全基因 spectra 重拟合和 marker score 计算，而不是原始 cNMF factorization 的输入。
+
+## 4. Gavish et al. 2023 的原始框架
+
+### 4.1 局部 NMF
+
+Gavish et al. 对每个 tumour 的恶性细胞单独运行 NMF：
+
+- 1,163 个 tumour samples。
+- 686,690 个高置信恶性细胞。
+- 每个 sample 至少 10 个恶性细胞。
+- 每个 sample 取平均表达最高的 7,000 个基因。
+- `K=4,5,6,7,8,9`，所以每个 tumour 产生 `4+5+6+7+8+9=39` 个原始 programs。
+- 公开文件名表明使用 `nrun=10`，但生成这些 W matrices 的完整驱动脚本没有公开，无法确认十次运行如何聚合。
+- 每个 program 按 NMF coefficient 取 top-50 genes。
+
+其输入先做 `log2(CPM/10+1)`，按 study 对每个基因中心化，再将 NMF 输入中的负值设为 0。最终审稿人质疑该截零会改变分布形状；公开审稿文件中未见作者对此追问的回应。
+
+### 4.2 robust programs
+
+Gavish 的筛选包含三层：
+
+1. **瘤内跨 K 复现**：与同一 tumour 另一个 program 重叠至少 `35/50=70%`。
+2. **跨 tumour 复现**：与其他 tumour 的某个 program 重叠至少 `10/50=20%`。
+3. **瘤内去冗余**：优先保留具有最强跨 tumour 支持的 program，再移除同一 tumour 内相似 program。
+
+这得到 5,547 个 robust NMF programs。
+
+> [!note] 代码与 Methods 的边界差异
+> Methods 写的是同一 tumour 内与已选 program 重叠 `20% or more` 即移除；公开代码在 `intra_max=10` 时允许恰好重叠 10 个基因的候选继续保留，只移除 overlap >10 的候选。复现时必须明确采用论文文字还是公开代码，不能隐式混用。
+
+### 4.3 跨 tumour MP 聚类
+
+公开代码的主要参数是：
+
+- founder 候选之间至少重叠 10 个基因。
+- founder 必须有多于 5 个这样的邻居。
+- 新 program 与当前 MP top-50 至少重叠 10 个基因才加入。
+- 每次加入后，按簇内出现频率更新 50 个共识基因；边界并列按 NMF score 打破。
+
+得到 67 个初始 MPs；再去除核糖体/线粒体富集、单研究支持和疑似 doublet programs，最终保留 41 MPs。
+
+最终 Figure 2 和 Supplementary Figure 1 给出 3,163/5,547 robust programs 进入 41 个 MP clusters，即 57.0%。正文同时写 66%，但没有给出能得到 66% 的替代分母。引用时应报告原始计数或约 57%。
+
+最终 41 MPs 又被作者**人工**归为 11 个 functional families。41 MPs 是主要数据产品，11 families 是解释层，不是算法自动发现的唯一分类。
+
+### 4.4 图框架是现有贪心算法的显式扩展
+
+Gavish 聚类本身可以写成一张隐式图：program 是节点，top-50 overlap >=10 表示可连接，最高邻居数的节点成为 founder，随后依据不断更新的 module consensus 吸收成员。因此“画 Jaccard 网络”本身不是新方法；真正新增的是用具有全局目标和 seed-stability 统计的 community detection 替代顺序敏感的贪心分区。
+
+本 SOP r2 定义两个用途不同的 experimental graphs：
+
+| Graph mode | 节点 | 回答的问题 |
+| --- | --- | --- |
+| `recurrent_graph` | 与 Stage 8a greedy 完全相同的 Stage 7 recurrent robust programs | 在固定 node set 上，Leiden 是否比 greedy 更稳定？ |
+| `landscape_graph` | 从 Stage 6 programs 在每个 tumour 内按 cross-K 证据折叠得到的 local GEPs，尚未执行 cross-tumour 删除 | 哪些状态是广泛 recurrent、context restricted、singleton 或 unresolved？ |
+
+`landscape_graph` 不能直接使用每个 K 的所有原始 factors，否则同一 tumour 的重复 cross-K factors 会形成虚假的 sample-specific module。主定义是：同一 tumour 内按不同 K 间 overlap >=35/50 分组；每组以 gene-frequency consensus top-50 作为 local GEP，保存组内平均 Jaccard 最高的 medoid 供追溯。只有一个 K 支持的 factor 仍进入审计图，但标记 `single_k_support`，不能建立 core recurrent module。
+
+第一版边定义保持简单，以分离“换聚类器”和“换相似度”两个实验变量：
+
+\[
+w_{ij}=J(A_i,A_j)=\frac{|A_i\cap A_j|}{|A_i\cup A_j|}
+\]
+
+仅在 overlap >=10/50 时建立 active edge，权重使用未经变换的 Jaccard；聚类只使用不同患者之间的边。同患者多区域边只用于诊断。连续 spectrum similarity、inverse-gene-frequency weighting 和 panel-aware similarity 均为后续 sensitivity，不与 v1 主图同时引入。
+
+Weighted Leiden-CPM 在预声明的 resolution grid 上每个运行 100 seeds，再以 pairwise co-clustering matrix 建立 consensus modules。它提供全局分区、multi-resolution 和稳定性统计，但不消除 top-50 二值化、resolution dependence、链式连接、hard partition 或技术 program 问题。它仍需人工做 QC 和命名。
+
+## 5. 两种 robust 是互补的
+
+| 稳定性层次 | cNMF | Gavish 外层框架 |
+| --- | --- | --- |
+| 随机初值 | 同 K、多个 seeds 的 factor consensus | `nrun=10` 的具体聚合未公开 |
+| rank/K | 不自动合并不同 K；K 选择仍需判断 | 要求 program 跨 K 重现 |
+| 细胞抽样 | 默认不检验 | 默认不检验 |
+| 跨 tumour | 默认不检验 | 要求在其他 tumour 重现 |
+| 跨 study/platform | 默认不保证 | 最终 MP QC 要求多研究支持 |
+
+因此，本 SOP 的架构是：
+
+> cNMF 负责内层优化稳定性；Gavish-style filtering 负责跨 rank 和跨 tumour 的复现；Stage 8a 保留 greedy reference；Stage 8b/8c 用图共识作 experimental comparison；本 SOP 另新增 cell bootstrap 和 ITH usage 判定。
+
+## 6. 本 SOP 的主方案
+
+### 6.1 主方案：adapted cNMF + Gavish outer consensus
+
+1. 使用 raw UMI counts。
+2. 遵循 cNMF 的非中心化、非截零原则。
+3. 在每个 study 的恶性细胞中建立固定 HVG panel 和 gene-SD，而不是在每个小 tumour 中重新估计。
+4. 将同一 study 的固定校准参数应用到各 tumour。
+5. 每个 tumour、每个 K 分别运行 cNMF consensus。
+6. 保留完整 spectra 和 usage；生成 top-50 program genes。
+7. 继续使用 Gavish 的跨 K、跨 tumour 和 greedy MP clustering 作为 reference。
+8. 在同一 recurrent node set 上比较 weighted Leiden consensus，并用 pre-inter-filter local GEPs 构建 landscape graph。
+9. 增加 cell bootstrap、技术相关性和 within-tumour usage variation 判定。
+
+### 6.2 为什么做 study-level 校准
+
+这是本 SOP 的适配，不是 cNMF 默认实现。理由是：
+
+- 少量细胞下 per-tumour Fano/overdispersion 和 SD 估计不稳定。
+- 固定 gene universe 有利于同一 study 内 top-gene overlap 的解释。
+- 可在选择 HVG 时平衡各 tumour 的细胞贡献，避免大样本支配。
+- 仍然逐 tumour 做 factorization，所以不会把跨 tumour 差异直接当成瘤内 program。
+
+代价是需要自定义 preprocessing；不能直接对每个 tumour 无脑调用 `cnmf prepare` 并声称使用了同一校准。
+
+## 7. top-50 的定义
+
+cNMF产生两类都值得保存的基因排名：
+
+| 名称 | 来源 | 含义 | 用途 |
+| --- | --- | --- | --- |
+| `basis_top50` | HVG 空间中的 consensus spectrum | 对 count reconstruction 贡献最大的基因 | 与 Gavish 原始 W-top50 最接近的敏感性分析 |
+| `marker_top50` | `gene_spectra_score` | 控制其他 GEP usage 后，与该 program 特异相关的正向 marker | 本 SOP 主分析的跨 K/跨 tumour gene list 与功能注释 |
+
+本 SOP 主分析使用 `marker_top50`，因为它遵循 cNMF 的标准 top-gene 定义、覆盖全部可用基因，并减少共同高表达基因被多个 program 重复占据的问题。必须同时保存 `basis_top50`；如果两种排名严重不一致，应将该 program 标记为不稳定，并在敏感性分析中报告。
+
+这意味着外层 overlap/Jaccard 算法保持不变，但 top-50 的统计语义不再与 Gavish 的 W coefficient 完全相同。报告中必须明确写成“cNMF marker-score top genes”。
+
+## 8. 两条独立的比较轴
+
+### 8.1 preprocessing/solver 变体
+
+| 变体 | 预处理 | 内层求解 | 用途 |
+| --- | --- | --- | --- |
+| A. Gavish reference | log2 CPM、study centering、negative clipping | 原 NMF/nrun=10 | 复现参考；保留截零问题 |
+| B. Solver-only ablation | 与 Gavish 相同 | cNMF consensus | 单独测试随机初值 consensus 的增益 |
+| C. 本 SOP 主方案 | raw counts、study-level HVG/SD、无中心化、无截零 | cNMF consensus | 构建新的混合流程 |
+
+Variant C 不是对 Variant A 的单变量替换。它同时改变了 preprocessing、factor consensus 和 top-gene definition，因此必须以 pilot 和敏感性分析支持，不能仅凭理论宣布更优。
+
+### 8.2 clustering 变体
+
+| 分支 | Node set | 聚类 | 地位 |
+| --- | --- | --- | --- |
+| 8a | Stage 7 recurrent robust programs | Gavish greedy + dynamic top-50 consensus | reference |
+| 8b recurrent | 与 8a 完全相同 | weighted Leiden-CPM + multi-seed consensus | 纯 clustering ablation |
+| 8b landscape | pre-inter-filter local GEPs | weighted Leiden-CPM + multi-seed consensus | common/restricted topology analysis |
+| 8c | 8b core modules + residual nodes | 对动态 module consensus 做可选吸收/soft affinity | experimental hybrid |
+
+只有 `8a` 与 `8b recurrent` 的比较能单独归因于聚类算法。`landscape_graph` 同时改变 node set，用于回答不同问题，不能用它单独宣称 Leiden 优于 greedy。8b/8c 只有在 bootstrap、leave-one-study-out、参考 41 MP 恢复和 context-specific retention 上通过预声明 pilot，才可升级为主方法。
+
+## 9. 什么才算 ITH program
+
+NMF/cNMF 能发现一个 factor，不代表该 factor 在该 tumour 内有足够变异。尤其在不中心化的 raw-count 模型中，可能出现：
+
+- 所有恶性细胞共同使用的 baseline program。
+- 只区分患者或 lineage 的 intertumour program。
+- 由 library size、mitochondrial、ribosomal 或 dissociation stress 驱动的技术 program。
+- 真正只在一部分恶性细胞中高 usage 的 ITH program。
+
+因此本 SOP 要求分开报告：
+
+1. **program recurrence**：跨 seed、跨 K、跨 tumour 是否存在。
+2. **within-tumour variation**：usage 在同一 tumour 内是否具有可重复的 dispersion。
+3. **between-tumour variation**：平均 usage 是否主要由患者/lineage 区分。
+4. **technical association**：usage 是否与 nUMI、nGene、pct_mito、batch 或 doublet score 相关。
+
+只有前两项均成立、且技术解释不能充分解释时，才称为 recurrent ITH MP。
+
+## 10. 证据边界
+
+- 共表达和 usage correlation 不证明共同调控。
+- SCENIC correlation 只能提出候选 regulator，不能证明因果。
+- MP 与 CNA 亚克隆相关不证明 CNA 驱动；无关联也不能排除点突变或表观遗传克隆。
+- MP 在正常上皮和癌细胞中相似，只支持共享状态假说，不证明该状态在癌变前沿同一谱系持续存在。
+- 不同细胞类型的 tumour-level MP 共变首先应称为 multicellular niche/co-variation；空间或干预证据充分时才能上调为 interaction。
+- bulk/cfRNA 的 MP score 反映平均信号和细胞组成，不能直接测量 ITH。
+
+## 11. 方法来源
+
+- Kotliar D, Veres A, Nagy MA, et al. *Identifying gene expression programs of cell-type identity and cellular activity with single-cell RNA-Seq.* eLife. 2019;8:e43803. DOI: `10.7554/eLife.43803`.
+- Gavish A, Tyler M, Greenwald AC, et al. *Hallmarks of transcriptional intratumour heterogeneity across a thousand tumours.* Nature. 2023;618:598-606. DOI: `10.1038/s41586-023-06130-4`.
+- Traag VA, Waltman L, van Eck NJ. *From Louvain to Leiden: guaranteeing well-connected communities.* Scientific Reports. 2019;9:5233. DOI: `10.1038/s41598-019-41695-z`.
+- Lancichinetti A, Fortunato S. *Consensus clustering in complex networks.* Scientific Reports. 2012;2:336. DOI: `10.1038/srep00336`.
+- Fortunato S, Barthélemy M. *Resolution limit in community detection.* Proceedings of the National Academy of Sciences. 2007;104:36-41. DOI: `10.1073/pnas.0605965104`.
+
+执行细节见 [2. 分析SOP](meta-workflow.qmd)，质量与解释标准见 [3. 质量控制与解释边界](meta-quality.qmd)。

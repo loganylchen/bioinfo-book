@@ -1,0 +1,648 @@
+# 项目运行记录模板
+
+> [!important] 使用说明
+> 新分析先复制本页，再填写所有 `TODO`。执行者必须先阅读 [0. 总览](meta-overview.qmd)、[1. 原理与设计决策](meta-principles.qmd)、[2. 分析SOP](meta-workflow.qmd) 和 [3. 质量控制与解释边界](meta-quality.qmd)。任何未填写的关键参数都应让 workflow 失败，不能静默使用软件默认值。
+
+## 0. 分析身份
+
+| 项目 | 内容 |
+| --- | --- |
+| Analysis ID | TODO |
+| Scientific owner | TODO |
+| Primary analyst | TODO |
+| Independent reviewer | TODO |
+| Start date | TODO |
+| Analysis mode | `single_tumour_mapping / single_study_discovery / multi_study_atlas` |
+| Cancer type / tissue | TODO |
+| Primary scientific question | TODO |
+| Intended downstream use | TODO |
+| SOP version | `sc-MetaPrograms-SOP-2026-08-26-r2` |
+| Code repository / commit | TODO |
+| Container digest | TODO |
+
+### 预声明的主要问题
+
+- TODO
+
+### 不在本分析回答范围的问题
+
+- TODO
+
+### 预声明 claims
+
+| Claim ID | 拟检验 claim | 所需最低证据等级 | 结果揭盲前判定规则 |
+| --- | --- | --- | --- |
+| C1 | TODO | TODO | TODO |
+
+---
+
+## 1. 输入清单与冻结
+
+### 文件
+
+| 文件 | 路径/URI | 格式 | 维度 | checksum | 只读确认 |
+| --- | --- | --- | --- | --- | --- |
+| Raw counts | TODO | TODO | TODO | TODO | [ ] |
+| Cell metadata | TODO | TODO | TODO | TODO | [ ] |
+| Gene mapping | TODO | TODO | TODO | TODO | [ ] |
+| Original annotation | TODO | TODO | TODO | TODO | [ ] |
+| Reference MP lists | TODO | TODO | TODO | TODO | [ ] |
+
+### 数据版本
+
+| 项目 | 值 |
+| --- | --- |
+| Species | TODO |
+| Genome build | TODO |
+| Annotation release | TODO |
+| Gene ID type | TODO |
+| Quantification pipeline | TODO |
+| scRNA-seq platform/chemistry | TODO |
+| Raw assay/layer | TODO |
+
+### 输入检查
+
+- [ ] `cell_id` 全局唯一。
+- [ ] counts 与 metadata 完全对齐。
+- [ ] raw counts 不含负值。
+- [ ] 未使用 integrated/scaled assay 作为 cNMF 输入。
+- [ ] duplicate gene symbols 已在 count 层合并并保留映射。
+- [ ] patient、tumour、region、batch 和 platform ID 含义已确认。
+- [ ] biological replicate 已明确定义。
+
+### 输入异常
+
+- TODO
+
+---
+
+## 2. Cell annotation 与恶性细胞确认
+
+### 已有 annotation
+
+- 来源：TODO
+- 方法：TODO
+- 是否由本项目重新注释：TODO
+
+### malignant evidence
+
+| Evidence | 方法/资源 | 通过标准 | 结果文件 | 备注 |
+| --- | --- | --- | --- | --- |
+| Original labels | TODO | TODO | TODO | TODO |
+| Lineage markers | TODO | TODO | TODO | TODO |
+| CNA inference | TODO | TODO | TODO | TODO |
+| Tumour genotype/SNV | TODO | TODO | TODO | TODO |
+| Normal reference | TODO | TODO | TODO | TODO |
+| Doublet detection | TODO | TODO | TODO | TODO |
+
+### 冲突和处理
+
+| Cell/cluster | 冲突 | 决定 | 理由 | reviewer |
+| --- | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO |
+
+### 状态计数
+
+| Study | Tumour | Malignant singlet | Non-malignant | Unresolved | Doublet | Included |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+---
+
+## 3. QC 与 tumour eligibility
+
+### cell QC thresholds
+
+| Study/platform | n_counts | n_genes | pct_mito | complexity | 其他 | 制定依据 |
+| --- | --- | --- | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### tumour eligibility
+
+| Study | Patient | Tumour | n malignant singlets | Tier | K grid | Included | Exclusion reason |
+| --- | --- | --- | ---: | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### 与临床或批次的 selection bias
+
+- TODO
+
+---
+
+## 4. Study-level calibration
+
+> 本节属于本 SOP 的 proposed adaptation，不得写成 cNMF 原论文默认流程。
+
+| Calibration unit | Studies/batches/platforms included | Tumours | Cells before balance | Cells after balance |
+| --- | --- | ---: | ---: | ---: |
+| TODO | TODO | TODO | TODO | TODO |
+
+### 参数
+
+| 参数 | 主分析 | 敏感性 | 决定时间/依据 |
+| --- | --- | --- | --- |
+| Tumour cell cap | TODO | TODO | TODO |
+| HVG method | `cnmf_fano` | TODO | TODO |
+| Number of HVGs | `2000` | `3000` | TODO |
+| TPM/CPM target for HVG selection | `1e6` | TODO | TODO |
+| SD source | raw counts | TODO | TODO |
+| zero center | `false` | 不改变 | cNMF principle |
+| log transform factorization input | `false` | TODO | cNMF principle |
+| negative clipping | `false` | 不改变 | cNMF principle |
+
+### 校准结果
+
+| Calibration unit | HVG file | SD file | Calibration cells | checksum | QC status |
+| --- | --- | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO |
+
+### HVG/SD 审查
+
+- [ ] 大 tumour 未支配 calibration。
+- [ ] 不同 subsampling seeds 的 HVG Jaccard 已计算。
+- [ ] zero/non-finite SD genes 已移除。
+- [ ] 每个纳入 cell 在固定 HVG 中有非零 counts。
+- [ ] 未在 tumour 层再次缩放。
+
+异常：TODO
+
+---
+
+## 5. cNMF 配置与 pilot
+
+### 软件
+
+| 软件 | version | commit/build | 环境 |
+| --- | --- | --- | --- |
+| cNMF | TODO | TODO | TODO |
+| Python | TODO | TODO | TODO |
+| scikit-learn | TODO | TODO | TODO |
+| Scanpy | TODO | TODO | TODO |
+| Workflow engine | TODO | TODO | TODO |
+
+### NMF 参数
+
+| 参数 | 值 |
+| --- | --- |
+| K grid | `[4,5,6,7,8,9]` 或 TODO |
+| Replicates per K | `100` 或 TODO |
+| beta loss | `frobenius` 或 TODO |
+| init | `random` 或 TODO |
+| max iterations | TODO |
+| tolerance | TODO |
+| master seed | TODO |
+| per-run seed rule | TODO |
+| local-neighborhood fraction | `0.30` 或 TODO |
+
+### density-threshold pilot
+
+代表 tumours 的选择必须在看生物学结果前完成。
+
+| Calibration unit | Cell-count tier | Representative tumours | no-filter result | Chosen tau | Loose sensitivity | Strict sensitivity |
+| --- | --- | --- | --- | --- | --- | --- |
+| TODO | low/medium/high | TODO | TODO | TODO | TODO | TODO |
+
+选择依据：TODO
+
+### cNMF 运行摘要
+
+| Tumour | K | Replicates | Converged | Spectra retained | Silhouette | Error | Status | Failure reason |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+- 失败任务数：TODO
+- 重跑任务数及原因：TODO
+- 是否曾针对单一 tumour 手调参数：`No / Yes, explain`
+
+---
+
+## 6. Tumour-level programs
+
+### top-gene 定义
+
+| 路径 | 排名来源 | top N | 用途 |
+| --- | --- | ---: | --- |
+| Primary | `gene_spectra_score` | 50 | robust/MP clustering |
+| Sensitivity | consensus basis | 50 | Gavish-compatible comparison |
+| Additional | TODO | 30/100 | cutoff sensitivity |
+
+### program 摘要
+
+| Tumour | K | Programs generated | Programs passing run QC | Technical flags | Output link |
+| --- | ---: | ---: | ---: | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO |
+
+### technical program 审查
+
+- [ ] mitochondrial enrichment。
+- [ ] ribosomal enrichment。
+- [ ] dissociation/immediate-early stress。
+- [ ] heat shock/UPR。
+- [ ] immune/stromal doublet signatures。
+- [ ] usage 与 n_counts/n_genes/pct_mito。
+- [ ] batch/region concentration。
+
+人工决定及理由：TODO
+
+---
+
+## 7. Robust-program filtering
+
+### 固定参数
+
+| 参数 | 主分析 | 敏感性 |
+| --- | --- | --- |
+| Cross-K overlap | `>=35/50` | TODO |
+| Require different K | `true` | TODO |
+| Cross-tumour overlap | `>=10/50` | TODO |
+| Require different patient | `true` | TODO |
+| Within-tumour redundancy | remove if `>10` | remove if `>=10` |
+
+### 产量
+
+| 层级 | Marker-top50 path | Basis-top50 path |
+| --- | ---: | ---: |
+| Raw consensus GEPs | TODO | TODO |
+| Cross-K stable | TODO | TODO |
+| Cross-patient recurrent | TODO | TODO |
+| Non-redundant robust | TODO | TODO |
+
+### 关键差异
+
+- TODO
+
+不得将 Gavish 的 5,547 当作目标产量。
+
+---
+
+## 8. MP clustering 与 experimental graph branch
+
+> Stage 8a 是 reference；8b/8c 是 experimental。不得因 network visualization 更清楚而跳过 8a。
+
+### 8a. Gavish greedy reference
+
+| 参数 | 值 |
+| --- | --- |
+| Founder overlap | `>=10` |
+| Add-program overlap | `>=10` |
+| Founder neighbor requirement | `>5` |
+| Tie-order repeats | `100` 或 TODO |
+| Multi-study atlas requirement | TODO |
+
+| 项目 | 数量 |
+| --- | ---: |
+| Robust programs entering 8a | TODO |
+| Initial greedy clusters | TODO |
+| Residual programs | TODO |
+| Technical/doublet clusters removed | TODO |
+| Single-study candidates | TODO |
+| Final 8a atlas-level MPs | TODO |
+
+### 8b. local GEP projection
+
+| 参数 | 冻结值 | 实际值/deviation |
+| --- | --- | --- |
+| Source | Stage 6 QC-pass programs | TODO |
+| Grouping | complete-linkage | TODO |
+| Distance | `50 - overlap`；same K 固定 50 | TODO |
+| Cut height | `15`，对应 all-pair overlap >=35 | TODO |
+| Cut-height sensitivity | `12/18`，对应 overlap >=38/>=32 | TODO |
+| Forbidden grouping | single linkage | TODO |
+| Local top-50 | gene-frequency consensus | TODO |
+| Tie breaker | mean continuous marker score | TODO |
+| Medoid | highest mean within-group Jaccard | TODO |
+| Single-K core eligible | `false` | TODO |
+
+| 项目 | 数量 |
+| --- | ---: |
+| Stage 6 programs entering projection | TODO |
+| Multi-K local GEPs | TODO |
+| Single-K landscape nodes | TODO |
+| Total landscape nodes | TODO |
+| Local groups failing QC | TODO |
+
+### 8b. graph parameters
+
+| 参数 | 冻结值 | 实际值/deviation |
+| --- | --- | --- |
+| Modes | recurrent + landscape | TODO |
+| Primary/sensitivity lists | marker_top50 / basis_top50 | TODO |
+| Top-N sensitivity | 30/50/100 | TODO |
+| Edge existence | top-50 overlap `>=10` | TODO |
+| Edge-threshold sensitivity | `>=5`、`>=15`；完整 resolution grid | TODO |
+| Threshold-5 technical gene-list resources | versioned mito/ribo/stress/housekeeping lists | TODO |
+| Edge weight | raw Jaccard | TODO |
+| Active edges | different patient only | TODO |
+| Same-patient edges | diagnostic only | TODO |
+| Algorithm/objective | weighted Leiden / CPM | TODO |
+| Resolution grid | `0.02,0.05,0.10,0.20,0.40,0.80,1.60` | TODO |
+| Provisional primary resolution | `0.10` | TODO |
+| Seeds per resolution | `100` | TODO |
+| Consensus | complete-linkage on `1-P` | TODO |
+| Minimum co-clustering | `0.80` | TODO |
+| Module top-50 | gene-frequency consensus; mean marker-score tie break | TODO |
+| Candidate MP | `>=3` independent patients | TODO |
+| Atlas MP | `>=2` independent studies | TODO |
+| Weak core member | module-consensus overlap `<10`；flag only | TODO |
+| Panel eligibility primary flag | `<0.80` | TODO |
+| Panel sensitivity | `0.60/0.80/0.90` | TODO |
+| Bridge rule | top affinities 0.40–0.60, gap `<=0.10` | TODO |
+| Patient-dedup grouping | within-patient complete-linkage, overlap `>=10` | TODO |
+| Patient-dedup representative | cross-patient weight, cell count, node ID | TODO |
+| Patient-dedup rerun | edge 10, resolution 0.10, 100 seeds | TODO |
+
+### graph input identity
+
+- [ ] `recurrent_graph` node IDs 与 8a 输入逐个相同。
+- [ ] `landscape_graph` 使用 local GEPs，未先做 cross-tumour deletion。
+- [ ] zero-degree nodes 被显式保存。
+- [ ] single-K nodes 未计入 core recurrent support。
+
+### resolution sweep
+
+| Graph mode | Edge threshold | Resolution | Modules | Singletons | Median size | Largest size | Consensus stability | Status |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### panel eligibility
+
+| Source node/study | Target study | Marker/basis | Eligible top genes | Fraction | Panel-limited | 对 restriction claim 的影响 |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### graph module 产量
+
+| Graph mode | Core modules | Candidate MPs | Atlas MPs | Context-restricted | Singleton/dyad | Bridges | Weak core | Technical/uncertain |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| recurrent | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+| landscape | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### graph-only sensitivity summary
+
+| Sensitivity | Frozen comparison | Module top-50/membership result | Singleton/module change | Technical signal | Conclusion |
+| --- | --- | --- | --- | --- | --- |
+| Edge overlap 5 vs 10 | same resolution 0.10 | TODO | TODO | New-edge technical-gene fraction: TODO | TODO |
+| Edge overlap 15 vs 10 | same resolution 0.10 | TODO | TODO | TODO | TODO |
+| Local cut 12/18 vs 15 | same downstream graph settings | TODO | TODO | TODO | TODO |
+| Within-patient dedup | edge 10, resolution 0.10 | TODO | TODO | Max patient share: TODO | TODO |
+| Include/exclude weak members in summaries | partition unchanged | TODO | TODO | TODO | TODO |
+
+### 8c. dynamic-consensus absorption
+
+| 参数/结果 | 值 |
+| --- | --- |
+| Minimum consensus overlap | `>=10` |
+| Bridge if top-two overlap gap | `<=1` gene |
+| Global selection/tie order | overlap descending, then node ID, module ID |
+| Residual/query nodes entering | TODO |
+| Peripheral absorbed | TODO |
+| Bridges retained | TODO |
+| Still unassigned/restricted | TODO |
+| Whether core partition and consensus were preserved separately | TODO |
+
+### graph-vs-greedy 公平比较
+
+比较 universe 必须是 8a 与 `recurrent_graph` 共有的同一组 nodes。
+
+| 指标 | 8a greedy | 8b recurrent Leiden | 8c hybrid | 判定 |
+| --- | ---: | ---: | ---: | --- |
+| Assigned node fraction | TODO | TODO | TODO | TODO |
+| Bootstrap membership stability | TODO | TODO | TODO | TODO |
+| Leave-one-study-out stability | TODO | TODO | TODO | TODO |
+| Gavish 41 MP recovery | TODO | TODO | TODO | TODO |
+| Technical-module rate | TODO | TODO | TODO | TODO |
+| Context-specific retention | TODO | TODO | TODO | TODO |
+| ARI/NMI vs other partition | TODO | TODO | TODO | TODO |
+| Split/merge count | TODO | TODO | TODO | TODO |
+
+8b/8c 是否达到升级为主方法的预声明标准：`No / Yes, evidence`
+
+不得强制任何分支最终等于 41 MPs。
+
+### 人工 QC ledger
+
+| MP/module/node | Method | Decision | Predeclared rule | Evidence | Reviewer |
+| --- | --- | --- | --- | --- | --- |
+| TODO | greedy/graph/hybrid | keep/remove/restricted/uncertain | TODO | TODO | TODO |
+
+### cluster stability
+
+- Greedy tie-order stability：TODO
+- Leiden seed/co-clustering stability：TODO
+- Resolution persistence：TODO
+- Leave-one-study-out：TODO
+- Marker vs basis path：TODO
+- Top-30/50/100：TODO
+- Panel-eligibility sensitivity：TODO
+- Edge threshold 5/10/15：TODO
+- Local cut height 12/15/18：TODO
+- Within-patient dedup：TODO
+- Weak-core member summary：TODO
+
+---
+
+## 9. MP scoring 与 ITH classification
+
+### scoring
+
+| 项目 | 值 |
+| --- | --- |
+| Scoring implementation/version | TODO |
+| Expression input | TODO |
+| Control-gene strategy | TODO |
+| Minimum signature genes | `25/50` 或 TODO |
+| High-score threshold | TODO |
+| Threshold calibration/null | TODO |
+
+### ITH 指标
+
+| MP | Tumour | IQR | MAD | q90-q10 | Fraction high | Bootstrap match | Technical correlation | Classification |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO | TODO |
+
+### 分类阈值
+
+- `recurrent_ITH`：TODO
+- `context_dependent_ITH`：TODO
+- `intertumour_or_lineage`：TODO
+- `ubiquitous_baseline`：TODO
+- `technical_or_uncertain`：TODO
+
+### cell bootstrap
+
+| 参数 | 值 |
+| --- | --- |
+| Cell fraction | `0.80` |
+| Repeats | `10` |
+| Match algorithm | TODO |
+| Provisional minimum match fraction | `0.80` 或 TODO |
+| Provisional minimum median Jaccard | `0.50` 或 TODO |
+
+结果摘要：TODO
+
+---
+
+## 10. Annotation 与 Gavish 41 MP mapping
+
+### enrichment
+
+| Database | Version | Background universe | Test | Correction | FDR |
+| --- | --- | --- | --- | --- | --- |
+| MSigDB H/C5/C8 | TODO | TODO | hypergeometric/TODO | BH | 0.05/TODO |
+
+### reference mapping
+
+| New MP | Best Gavish MP | Shared genes | Jaccard | Second match | Label | Evidence |
+| --- | --- | ---: | ---: | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | known/split/novel/uncertain | TODO |
+
+### naming ledger
+
+| MP | Proposed name | Top genes | Enrichment | Context | Reviewer approval |
+| --- | --- | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | TODO | TODO |
+
+---
+
+## 11. Sensitivity 与独立验证
+
+| 分析 | 预声明参数 | 完成 | 主要结果 | 是否改变结论 |
+| --- | --- | --- | --- | --- |
+| HVG 2,000 vs 3,000 | TODO | [ ] | TODO | TODO |
+| density threshold | TODO | [ ] | TODO | TODO |
+| marker vs basis top genes | TODO | [ ] | TODO | TODO |
+| top-30/50/100 | TODO | [ ] | TODO | TODO |
+| redundancy `>10` vs `>=10` | TODO | [ ] | TODO | TODO |
+| greedy vs recurrent-graph Leiden | same recurrent nodes | [ ] | TODO | TODO |
+| Leiden resolution sweep | `0.02–1.60` | [ ] | TODO | TODO |
+| Edge overlap threshold | `5/10/15`, same resolution comparison | [ ] | TODO | TODO |
+| Local complete-linkage cut | `12/15/18`; no single linkage | [ ] | TODO | TODO |
+| Within-patient dedup graph | overlap 10; edge 10; resolution 0.10 | [ ] | TODO | TODO |
+| Weak-core summary | include/exclude; partition unchanged | [ ] | TODO | TODO |
+| 100-seed co-clustering consensus | threshold `0.80` | [ ] | TODO | TODO |
+| panel eligibility | `0.60/0.80/0.90` | [ ] | TODO | TODO |
+| landscape singletons/bridges | TODO | [ ] | TODO | TODO |
+| Leiden vs Leiden + absorption | overlap `>=10` | [ ] | TODO | TODO |
+| 80% cell bootstrap | TODO | [ ] | TODO | TODO |
+| leave-one-study-out | TODO | [ ] | TODO | TODO |
+| platform-stratified | TODO | [ ] | TODO | TODO |
+| independent dataset | TODO | [ ] | TODO | TODO |
+| spatial/IHC/other orthogonal | TODO | [ ] | TODO | TODO |
+
+未完成项目及影响：TODO
+
+---
+
+## 12. Deviations 与问题记录
+
+所有偏离 SOP 的决定都记录在这里。
+
+| Date | Stage | Deviation/problem | Reason | Before/after seeing results | Impact | Approved by |
+| --- | --- | --- | --- | --- | --- | --- |
+| TODO | TODO | TODO | TODO | before/after | TODO | TODO |
+
+### Failed approaches
+
+- TODO
+
+### Unresolved questions
+
+- TODO
+
+---
+
+## 13. Claim ledger
+
+使用 `Claim / Method / Holds up? / So what` 结构。
+
+| Claim | Method/evidence | Holds up? | Allowed wording | Forbidden overclaim | So what |
+| --- | --- | --- | --- | --- | --- |
+| TODO | TODO | yes/partial/no | TODO | TODO | TODO |
+
+特别检查：
+
+- [ ] 单 tumour GEP 未被称为 de novo MP。
+- [ ] recurrent detection 未被写成 mean-high expression。
+- [ ] ITH 有 tumour 内 dispersion，不只是 tumour 间差异。
+- [ ] non-genetic 语言限定为当前可检测 CNA 不能充分解释。
+- [ ] interaction 有足够空间/机制证据，否则写 co-variation/niche。
+- [ ] regulator association 未被写成 causal regulation。
+- [ ] bulk/cfRNA score 未被写成 ITH level。
+- [ ] singleton/low-degree node 未被直接写成 sample-specific biology。
+- [ ] panel-limited non-edge 未被用于支持 cohort restriction。
+- [ ] landscape graph 未被冒充为 clustering-only ablation。
+
+---
+
+## 14. Deliverables
+
+| Deliverable | Path/link | Complete | Reviewer |
+| --- | --- | --- | --- |
+| Input manifest | TODO | [ ] | TODO |
+| QC report | TODO | [ ] | TODO |
+| Preprocessing manifest | TODO | [ ] | TODO |
+| cNMF run metrics | TODO | [ ] | TODO |
+| Full spectra/usages | TODO | [ ] | TODO |
+| Program tables | TODO | [ ] | TODO |
+| Local GEP projection/membership | TODO | [ ] | TODO |
+| Robust filtering ledger | TODO | [ ] | TODO |
+| MP membership/top genes | TODO | [ ] | TODO |
+| Graph nodes/edges/panel eligibility | TODO | [ ] | TODO |
+| Resolution/co-clustering/modules | TODO | [ ] | TODO |
+| Singleton/bridge/weak-core ledger | TODO | [ ] | TODO |
+| Edge/cut-height/patient-dedup sensitivities | TODO | [ ] | TODO |
+| Graph-vs-greedy comparison | TODO | [ ] | TODO |
+| ITH metrics/bootstrap | TODO | [ ] | TODO |
+| Annotation/reference mapping | TODO | [ ] | TODO |
+| Sensitivity report | TODO | [ ] | TODO |
+| Final report | TODO | [ ] | TODO |
+| Reproducible environment | TODO | [ ] | TODO |
+
+---
+
+## 15. AI / analyst handoff contract
+
+将本段与项目文件一同交给新分析人员：
+
+```text
+开始前阅读 Statistics/sc-MetaPrograms/ 下 0–5 的全部文档。
+只使用 manifest 指定的 raw count layer；不要使用 integrated/scaled assay。
+不要做 gene mean centering，不要做 negative clipping。
+未经批准不要改变 HVG、K、NMF replicate、density threshold、top-N 或 overlap 阈值。
+若运行 Stage 8b/8c，不得改变 graph node set、edge definition、resolution grid、seed 数、consensus、panel eligibility 或 bridge 参数。
+必须先完成 8a greedy reference；recurrent graph 必须使用逐个相同的 nodes。
+任何失败任务必须记录，不能静默删除。
+只有一个 tumour 时，只报告 GEP 和 reference-MP mapping，不宣称 de novo MP。
+所有 intermediate spectra、usage、top-gene lists 和 removal reasons 必须保存。
+在报告生物学结果前，先提交 run QC、bootstrap 和 technical-confounder review。
+发现 SOP 与数据不兼容时先暂停并写 deviation proposal，不要自行改流程后继续。
+```
+
+---
+
+## 16. Final sign-off
+
+### Analyst
+
+- 姓名：TODO
+- 日期：TODO
+- 结论：TODO
+- 未解决风险：TODO
+
+### Independent reviewer
+
+- 姓名：TODO
+- 日期：TODO
+- [ ] 输入和重复单位正确。
+- [ ] 参数与预声明一致。
+- [ ] 失败和 deviations 完整。
+- [ ] MP/ITH/因果措辞符合证据。
+- [ ] 结果可从冻结输入和代码 commit 重建。
+- Reviewer comments：TODO
+
+### Scientific owner
+
+- 姓名：TODO
+- 日期：TODO
+- 决策：accept / exploratory only / revise / reject
+- 理由：TODO

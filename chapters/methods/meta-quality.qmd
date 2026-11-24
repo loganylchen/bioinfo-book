@@ -1,0 +1,430 @@
+# 质量控制与解释边界
+
+本页用于决定一个 program/MP 是否可以保留、如何表述，以及何时必须停止分析。执行步骤见 [2. 分析SOP](meta-workflow.qmd)。
+
+## 1. 证据等级
+
+| 等级 | 可以支持的结论 | 需要的最低证据 |
+| --- | --- | --- |
+| L1. algorithmic program | 同一矩阵中存在稳定非负因子 | cNMF seed consensus、收敛和可解释 spectra |
+| L2. sampling-stable program | program 不依赖当前这批细胞的偶然抽样 | cell bootstrap/downsampling 复现 |
+| L3. recurrent program | 多个独立 tumours 出现相似 program | cross-K、cross-patient top-gene overlap |
+| L4. meta-program | recurrent programs 形成稳定共识簇 | cluster stability、多患者/研究支持、technical QC |
+| L5. ITH meta-program | MP 在多个 tumours 内均存在稳定 cell-to-cell variation | final MP score dispersion、bootstrap、技术协变量排除 |
+| L6. biological mechanism | 指定调控或相互作用产生该状态 | 空间、时间、遗传或干预证据；相关性不够 |
+
+不能从 L1/L2 直接跳到 L5/L6。
+
+## 2. 输入矩阵风险
+
+### 2.1 没有 raw counts
+
+如果只有 log-normalized、integrated 或 scaled matrix：
+
+- 可以给已有 signature 打分。
+- 不应声称按本 SOP 运行了 cNMF discovery。
+- 不要将负值矩阵截零后伪装成 raw-count cNMF。
+
+### 2.2 中心化和截零
+
+cNMF 原生原则是不做 mean centering。以下操作不属于本 SOP 主方案：
+
+\[
+X' = \max(X-\bar X, 0)
+\]
+
+它会将所有低于均值的值压成完全相同的 0，改变稀疏性和分布形状。若为复现 Gavish 而运行该变体，必须标为 reference/ablation，不能与主方案混称。
+
+### 2.3 library size
+
+cNMF factorization 默认不做 per-cell library-size normalization。应同时检查：
+
+- unnormalized usage 的 row sum 与 `n_counts`。
+- normalized usage 中每个 GEP 与 `n_counts`、`n_genes`。
+- high-depth 与 low-depth cells 的 GEP composition。
+- program top genes 是否富集普遍高表达基因。
+
+总 usage 与 depth 相关是模型设计的预期结果；某个 normalized GEP usage 强烈由 depth 决定则是风险。不要分析后随意回归掉 depth；应运行预声明的 normalized-input sensitivity 并比较 program 稳定性。
+
+### 2.4 imputation 和 integration
+
+Imputation 可能制造基因相关结构，integration 可能移除真实 tumour-specific variation。若确实需要 batch correction：
+
+- 只校正明确技术变量。
+- 保存未校正主分析。
+- 比较校正前后 programs。
+- 不把 patient_id 当作纯技术 batch 全部移除，因为 patient variation 可能是真实生物学。
+
+## 3. 恶性细胞与污染
+
+### 常见失败模式
+
+- 正常 epithelial cells 被标为 malignant。
+- malignant-T-cell 或 malignant-myeloid doublets 形成 immune-like program。
+- ambient RNA 产生高表达 secreted/lineage markers。
+- CNA-low malignant cells 被错误删除。
+- CNA-high stressed normal cells被误纳入。
+
+### 诊断
+
+- top-usage cells 的原始 marker heatmap。
+- CNA、doublet 和 ambient score 分布。
+- program usage 在 malignant、unresolved 和 non-malignant cells 中的对照。
+- 与已知 TME cell-type signatures 的 Jaccard/score。
+
+若一个“新 malignant MP”高度匹配 T cell、macrophage 或 fibroblast identity，首先按污染处理，而不是立即解释为 transdifferentiation。
+
+## 4. 细胞数和 rank
+
+NMF 总能在给定 K 时返回因子，但返回因子不等于数据支持 K 个生物学 programs。
+
+风险随以下情况增加：
+
+- `n_cells` 接近 K。
+- dropout 高、median UMI 低。
+- 一个状态只含极少 cells。
+- K 增大时一个 program 不断被拆分。
+- K-means consensus cluster 由很少 seeds 支持。
+
+本 SOP 的 `>=200 / 100–199 / <100` tiers 是待 pilot 的 operational defaults，不是统计定理。最终是否纳入应结合 bootstrap、consensus support 和可解释性，而不是只看细胞数。
+
+## 5. cNMF consensus 诊断
+
+### 5.1 seed consensus 只能解决优化不稳定
+
+100 次随机初始化使用的是同一张数据矩阵。即使 consensus 很清晰，也不能说明：
+
+- 换一批 cells 后仍存在。
+- 换患者后仍存在。
+- 不是 batch 或 dissociation artifact。
+
+必须同时做 cell bootstrap 和 cross-patient recurrence。
+
+### 5.2 density threshold
+
+\(\tau\) 太严格：
+
+- 过滤掉较少见但真实的 program。
+- filtering 后 spectra 少于 K，导致 consensus 失败。
+- 只保留最宽泛、最强的状态。
+
+\(\tau\) 太宽松：
+
+- 离群因子进入 K-means。
+- consensus spectrum 被混合。
+- clustergram 缺少清晰 block。
+
+不能对每个 tumour 手工选一个“最好看”的阈值。应在 pilot 中按 study/platform 冻结，并报告 no-filter (`2.0`) sensitivity。
+
+### 5.3 K 的解释
+
+K 不存在普适自动答案。reconstruction error 会随 K 增加而下降；最大 silhouette 也不保证保留所有弱生物学信号。
+
+本 SOP 不选择单一 K，而是检验 program 能否跨 K=4–9 重现。跨 K 复现意味着分辨率稳定，不意味着因果或完整性。
+
+## 6. top-50 信息损失
+
+一旦将连续 spectrum 压成 top-50：
+
+- 第 50 与第 51 名的微小差异会变成二元边界。
+- gene weight 幅度被丢失。
+- 不同 gene universe 改变 overlap 的机会。
+- 高表达、长基因或高检测率可能影响排名。
+
+因此必须保存完整 spectra 和 gene scores，并进行：
+
+- `marker_top50` 与 `basis_top50` 对照。
+- top-30、top-50、top-100 sensitivity。
+- 连续 spectrum correlation 或 rank correlation sensitivity。
+
+若只有 top-50 结果稳定，而完整 spectra 不稳定，不应过度解读。
+
+## 7. stress 和解离伪影
+
+高风险 genes 包括但不限于：
+
+- immediate early：`FOS`, `JUN`, `JUNB`, `FOSB`, `EGR1`, `ATF3`, `IER2`, `IER3`
+- heat shock：`HSPA1A`, `HSPA1B`, `HSPH1`, `DNAJB1`
+- integrated stress/UPR：`DDIT3`, `ATF4`, `PPP1R15A`, `XBP1`
+
+判断顺序：
+
+1. usage 是否与 low quality、processing time、platform 或 batch 相关。
+2. 同一程序是否出现在独立实验和不同 dissociation protocol。
+3. 空间/原位数据是否能在未解离组织中复现。
+4. 是否有生物学条件、刺激或缺氧等独立支持。
+
+不要一律删除 stress program；也不要因跨研究复现就断言不是共同解离伪影。
+
+## 8. cell cycle、lineage 与 baseline
+
+### cell cycle
+
+Cell-cycle GEP 通常是真实且稳定，但它会混杂：
+
+- tumour growth fraction。
+- cfRNA/tissue 中增殖细胞比例。
+- 某些候选基因的“癌特异”解释。
+
+例如 `UHRF1` 位于 Gavish MP2 G1/S。观察到 UHRF1 上调时，首先要考虑增殖状态，而不是自动解释为 CRC 特异驱动。
+
+### lineage/context
+
+PDAC-classical、alveolar、neural、skin-pigmentation 等程序可能主要反映组织/lineage。若一个 GEP：
+
+- tumour 间平均差异大；
+- 每个 tumour 内 usage 近似恒定；
+
+则应分类为 `intertumour_or_lineage`，不是 ITH。
+
+### baseline
+
+不中心化的 cNMF可能产生所有恶性细胞共同使用的 baseline GEP。它对重建有用，但不能因其跨患者稳定就称为 ITH hallmark。
+
+## 9. normalized usage 的 compositional effect
+
+cNMF normalized usage 满足每个 cell 的 usages 之和为 1。某个 program usage 增加时，其他 programs 即使绝对活性不变，其比例也可能下降。
+
+因此：
+
+- normalized usages 的负相关可能只是 closure effect。
+- 同时检查 unnormalized usage、独立 signature score 和原始 marker expression。
+- 不用 normalized usage 的负相关直接声称 programs 相互抑制。
+- 跨 tumour 比较时检查 library size 和 cell composition。
+
+## 10. recurrent detection 不等于高平均表达
+
+需要分开四个量：
+
+| 量 | 问题 |
+| --- | --- |
+| robust program detection | 该 tumour 是否有一个跨 K 稳定的相关基因因子？ |
+| mean MP score | tumour 的平均状态信号多高？ |
+| prevalence | 有多少 cells 超过预定义高分阈值？ |
+| dispersion | 同一 tumour 内高低差异多大？ |
+
+一个 MP 可以平均表达不高，但在少数 cells 中很高并形成稳定 ITH。反过来，一个 lineage MP 可以平均很高但所有 cells 几乎相同，因而不是 ITH。
+
+## 11. 跨 tumour、跨 patient 和跨 study
+
+### 独立性层级
+
+证据强度通常为：
+
+```text
+同一 tumour 不同 cells
+< 同一 patient 不同 regions/time points
+< 同一 study 不同 patients
+< 独立 studies/平台中的 patients
+```
+
+跨 tumour filter 应优先要求 different patient。最终 atlas MP 应报告 patient、study 和 platform 支持，而不仅是 program 数。
+
+### 大样本支配
+
+- HVG calibration 要平衡 tumour cell counts。
+- MP cluster support 应按 patient/study 报告，不能只按 programs 数。
+- 一个 tumour 在多个 K 中贡献多个相似 programs，不应被当作多个独立验证。
+
+### Simpson's paradox
+
+跨研究合并的 MP-MP correlation 可能由 study/cancer-type composition 产生。应：
+
+- study 内中心化 tumour-level summaries（仅用于关联分析，不用于 cNMF 输入）。
+- 分 study 计算并做 meta-analysis。
+- 报告 heterogeneity，而不只报告 pooled p-value。
+
+## 12. 贪心与图 MP 聚类
+
+Gavish-style clustering具有：
+
+- threshold dependence。
+- founder/tie-order dependence。
+- top-50 二值化依赖。
+- 后续人工去除技术 clusters。
+
+因此 41 不是算法必然的“真实维度”。新分析必须：
+
+- 让 MP 数量自然产生。
+- 保存 residual programs。
+- 运行 order、threshold 和 leave-one-study-out sensitivity。
+- 为每个人工移除的 cluster 保存预声明理由。
+- 不把人工 families 写成无监督算法发现的自然类别。
+
+### 12.1 weighted graph 没有消除 top-50 问题
+
+若 edge 仍由 top-50 Jaccard 定义，网络只改变了 partition algorithm，并没有恢复第 51 名之后的连续信息。必须继续做 marker/basis、top-N 和 continuous-spectrum sensitivity。网络图更复杂不等于输入证据更丰富。
+
+### 12.2 resolution dependence 和小模块
+
+Leiden-CPM 比标准 modularity 更适合显式扫描 resolution，但不能提供唯一“真实”模块数。resolution 太低会合并生物学上不同的状态，太高会产生大量 singleton。必须报告完整的 `resolution × module count × size distribution × stability` 曲线；禁止根据功能名称或图形美观只挑一个 resolution。
+
+低频真实状态尤其容易被大模块吞并。candidate module 在一个 resolution 消失时，不应立即删除；应检查相邻 resolution、cell bootstrap 和 leave-one-study-out persistence。
+
+#### Within-patient replication bias
+
+同一患者的多个 regions/time points 即使彼此不连边，仍可能分别连接到其他患者并放大该患者对社区边界的影响。primary `recurrent_graph` 保留全部节点，是为了与 8a reference 维持逐个相同的 node set，而不是因为这些节点具有独立性。
+
+必须另做 within-patient dedup sensitivity：同患者 pairwise overlap >=10 的 nodes 用 complete-linkage 折叠，在 primary threshold/resolution 重跑；比较 module top-50、membership 和最大单患者 node share。模块支持数始终按 unique patient 计算。
+
+#### Low-threshold hub inflation
+
+将 edge threshold 从 overlap 10 降到 5 会快速增加 weak edges。stress、mitochondrial、ribosomal 和 housekeeping genes 可能把原本不同的 programs 粘成大 hub。threshold 5 sensitivity 必须报告仅新增 edges 的 shared technical-gene fraction、module merge 和 technical-module rate。出现 inflation 应作为敏感性失败如实报告，不能通过事后调 resolution“挽救”。
+
+### 12.3 chaining
+
+可能出现：
+
+```text
+A-B overlap = 12
+B-C overlap = 12
+A-C overlap = 4
+```
+
+图算法可能通过 B 将 A、C 放入同一 community，但这不保证存在一致的三者共识。瘤内 local GEP grouping 因此禁止 single linkage；主分析使用 complete linkage，并对 cut height 12/15/18 做敏感性。每个 module 仍需检查：
+
+- 所有成员对 module consensus top-50 的 overlap。
+- module 内最小、median 和分位数 similarity。
+- 去掉最高 betweenness node 后是否断裂。
+- split/merge 是否随 resolution 改变。
+
+### 12.4 hard partition 和 bridge nodes
+
+一个低 K factor 可能混合两个状态，真实程序也可能共享一组 genes。若 node 对两个 modules 的 consensus/co-clustering affinity 接近，应标记 `bridge` 或 soft membership，而不是强迫其进入一个生物学类别。bridge 也要优先排查 doublet 和技术混合。
+
+### 12.5 singleton 不等于 sample-specific biology
+
+孤立或低 degree node 可能来自：
+
+- 真正的患者/情境特异状态。
+- 细胞数或测序深度不足导致其他 tumours 无检测功效。
+- single-K 不稳定 factor。
+- gene-panel 不兼容。
+- gene ID 映射错误。
+- stress、doublet 或噪声。
+
+因此只能先称为 `landscape_restricted candidate`。升级为 biological context-specific program 至少需要 cross-K 或 cell-bootstrap 稳定、技术 QC、足够的对照检测功效，以及多个独立患者或正交证据。
+
+### 12.6 panel eligibility
+
+对 study A 的 program 判断在 study B“缺失”前，必须确认 A 的 top genes 在 B 的 eligible gene universe 中本来可以被选中。建议计算：
+
+\[
+E(A,B)=\frac{|top50(A)\cap eligible\_genes(B)|}{50}
+\]
+
+`E<0.8` 暂标 `cross_study_panel_limited`，并做 0.6/0.8/0.9 sensitivity。`basis_top50` 受 study-level HVG panel 限制最大；`marker_top50` 来自 all-gene refit，影响较小但仍可能受定量和 ID mapping 影响。panel-limited non-edge 不能支持生物学特异性。
+
+### 12.7 degree、hub 和 layout
+
+- 高频 stress、ribosomal、cell-cycle 或 housekeeping genes 可能制造高 degree hubs。
+- degree 高只表示在当前 similarity 定义下连接多，不等于 biological importance。
+- force-directed layout 的距离和位置依赖随机 seed 与绘图参数，不是检验统计量。
+- study/cancer type 颜色只能用于解释和诊断，不能先参与 clustering 后再声称发现 context enrichment。
+
+### 12.8 graph branch 的升级标准
+
+在相同 recurrent node set 上，8b 只有在以下预声明指标总体优于或稳定补充 8a 时，才可升级：
+
+- cell-bootstrap membership stability。
+- leave-one-tumour/study-out stability。
+- Gavish 41 MP recovery。
+- technical-module purity。
+- context-specific program retention。
+- split/merge 和 unassigned rate。
+
+可视化更清楚、模块名字更好听或最终模块数更接近 41 都不是升级依据。
+
+## 13. genetic subclone 解释
+
+MP 与 inferred CNA subclone 的相关只能支持 association。无相关不能证明 program 是非遗传，因为：
+
+- scRNA-derived CNA 主要检测大尺度改变。
+- 点突变、小 indel、局部 CNA 和表观遗传克隆可能不可见。
+- subclone assignment 的检测功效有限。
+
+建议措辞：
+
+> 该 MP 的 variation 未被当前可检测的大尺度 CNA subclones 充分解释，符合 non-genetic plasticity 假说。
+
+不建议措辞：
+
+> 该 MP 已证明由非遗传机制产生。
+
+## 14. 细胞互作和空间共定位
+
+不同 cell types 的 tumour-level MP prevalence 相关首先是 co-varying multicellular niche。进一步升级证据需要：
+
+- study 内复现。
+- 排除 shared genes、tumour purity 和 cancer-type composition。
+- 空间邻近或共定位。
+- ligand-receptor 可行性。
+- 干预、时间顺序或机制实验。
+
+空间共定位仍不等于直接相互作用；它只是比 pseudobulk correlation 更强的一层证据。
+
+## 15. bulk、空间和 cfRNA 边界
+
+| 数据 | 可以做 | 不能直接做 |
+| --- | --- | --- |
+| scRNA-seq | cell-level MP score、prevalence、dispersion | 无独立患者时做群体推断 |
+| Visium | spot-level MP signal、空间分区 | 将 mixed spot 当单个恶性细胞 |
+| bulk tissue | 平均 MP signal、临床关联 | 直接估计单瘤 ITH |
+| cfRNA | 循环系统中的 signature signal | 区分 tumour-cell state、tumour fraction 与血细胞组成而无需模型 |
+
+bulk/cfRNA 中的高 MP score 应表述为“与该 MP signature 一致的平均表达信号增强”，而不是“该患者 ITH 更高”。
+
+## 16. 单 tumour 的表述
+
+只有一个 tumour 时可以写：
+
+- “发现 K 个 sampling-stable tumour-level GEPs。”
+- “GEP3 与 Gavish MP2 G1/S 的 top genes 高度重叠。”
+- “该 tumour 内 MP2-like score 呈现明显 cell-to-cell dispersion。”
+
+不能写：
+
+- “发现了一个新的 recurrent MP。”
+- “证明该状态在 CRC 中普遍存在。”
+- “建立了一个 pan-cancer hallmark。”
+
+## 17. 推荐语言
+
+| 证据 | 推荐 | 避免 |
+| --- | --- | --- |
+| top-gene overlap | `matches`, `resembles`, `is aligned with` | `is identical to` |
+| cNMF factor | `program`, `GEP` | 未经跨 tumour 验证直接叫 `MP` |
+| tumour-level correlation | `co-varies`, `is associated with` | `interacts with`, `drives` |
+| CNA 无关联 | `not explained by detected large-scale CNA subclones` | `non-genetic` 作为确定结论 |
+| bulk score | `average signature signal` | `ITH level` |
+| regulator correlation | `candidate regulator` | `master regulator` 或 `causal regulator` |
+| normal/cancer similarity | `shared or reactivated state` | `proven pre-malignant origin` |
+
+## 18. 立即停止或降级结论的条件
+
+- 只有 integrated/scaled matrix，无法取得 raw counts。
+- malignant annotation 无法与正常上皮或 doublets 分开。
+- cNMF usage 主要由 QC/batch 指标决定。
+- 绝大多数 NMF runs 不收敛。
+- programs 在 cell bootstrap 中不复现。
+- recurrent support 只来自一个 patient 的多个 samples。
+- MP cluster 对 founder order 或一个 study 极端敏感。
+- Graph modules 对 resolution/seed 极端敏感、由 panel-limited non-edges 定义，或只能依赖一个 bridge hub 连接。
+- 所谓 ITH 只有 tumour 间平均差异，没有 tumour 内 dispersion。
+- bulk/cfRNA 被要求直接回答 cell-level ITH。
+
+遇到这些情况时，结果应降级为 exploratory，或只进行 reference signature scoring。
+
+## 19. 发布前审查问题
+
+1. 一个独立 reviewer 能否从 manifest 重建每个 program 的来源？
+2. 每个 MP 有多少 independent patients，而不只是多少 programs？
+3. 换细胞、换 K、换 HVG、换 density threshold 后是否仍存在？
+4. technical、stress、lineage 和 baseline 解释是否优先排查？
+5. “detected”“high mean”“prevalent”“heterogeneous”是否被分开？
+6. 所有因果、interaction 和 non-genetic 语言是否与证据等级匹配？
+7. 只有一个 tumour 时是否避免使用 de novo MP 术语？
+8. bulk/cfRNA 是否仅被解释为平均 signature signal？
+9. Graph branch 是否报告 node set、resolution sweep、co-clustering、panel eligibility、isolates 和 graph-vs-greedy comparison？
+
+运行记录使用 [5. 项目运行记录模板](meta-template.qmd)。

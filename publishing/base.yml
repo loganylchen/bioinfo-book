@@ -1,0 +1,30 @@
+project:
+  type: book
+  output-dir: _book
+lang: zh
+book:
+  title: 生物信息学手记
+  author: Yuelong Chen
+  site-url: https://loganylchen.github.io/bioinfo-book/
+  repo-url: https://github.com/loganylchen/bioinfo-book
+  output-file: bioinfo-book
+  downloads: [epub]
+  favicon: mark.svg
+  search: true
+  sidebar:
+    style: docked
+    collapse-level: 1
+  page-footer:
+    left: 生物信息学手记 · Bioinformatics Fieldnotes
+    right: '[图版与授权](https://loganylchen.github.io/bioinfo-book/rights.html)'
+execute:
+  enabled: false
+format:
+  html:
+    theme: cosmo
+    css: book.css
+    toc-depth: 2
+    link-external-newwindow: true
+    code-overflow: wrap
+  epub:
+    toc-depth: 2
