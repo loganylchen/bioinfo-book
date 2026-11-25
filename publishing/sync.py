@@ -17,6 +17,7 @@ PAPERS = Path('References')
 ESSAYS = PAPERS/'公众号解读'
 DOI = re.compile(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+', re.I)
 PRIVATE = re.compile(r'仅供私人|仅限私人|私人审读归档|仅供内部|不得公开|禁止公开|private[-_ ](?:only|study|reading)', re.I)
+RESTRICTED_TEXT = re.compile(r'仅供内部|不得公开|禁止公开|public reuse (?:rights )?not (?:cleared|authorized)', re.I)
 UNSAFE = re.compile(r'(?i)(?:\b(?:Daily|Projects)/|(?:/home/|/Users/|/mnt/|/Volumes/)|file://|obsidian://|<\s*(?:script|iframe|object|embed)\b|\{\{<|^```\{|BEGIN [A-Z ]*PRIVATE KEY)', re.M)
 WIKI = re.compile(r'(!?)\[\[([^\]\n]+)\]\]')
 IMAGE = re.compile(r'!\[([^\]\n]*)\]\(([^)\n]+)\)')
@@ -83,10 +84,12 @@ def catalog(vault, sections):
         if path.resolve() != path.absolute():
             raise ValueError('Symlink is not a publication source')
         meta, body = read_note(path)
-        scope = ' '.join(str(meta.get(key,'')) for key in ('status','archive_scope','visibility'))
-        if meta.get('book_publish') is False or meta.get('draft') is True or meta.get('private') is True or re.search(r'\bprivate\b',scope,re.I) or str(meta.get('status','')).lower() == 'draft' or PRIVATE.search(scope+'\n'+body):
-            continue
         paper = relative.is_relative_to(PAPERS)
+        scope = ' '.join(str(meta.get(key,'')) for key in ('status','archive_scope','visibility'))
+        if meta.get('book_publish') is False or meta.get('draft') is True or meta.get('private') is True or str(meta.get('visibility','')).strip().lower() == 'private' or str(meta.get('status','')).lower() == 'draft':
+            continue
+        if not paper and (re.search(r'\bprivate\b',scope,re.I) or PRIVATE.search(scope+'\n'+body)):
+            continue
         if paper:
             meta = paper_metadata(meta, body)
         doi = paper_doi(meta) if paper else ''
@@ -112,11 +115,12 @@ def catalog(vault, sections):
             slug = meta.get('book_slug') or path.stem
         if part not in sections or not SLUG.fullmatch(slug) or slug in slugs:
             raise ValueError('Invalid or duplicate publication identifier')
-        if paper and (card or meta.get('publication_authorized') is False):
+        restricted = paper and (meta.get('publication_authorized') is False or RESTRICTED_TEXT.search(scope+'\n'+body))
+        if paper and (card or restricted):
             heading = re.search(r'(?m)^# (.+)$',body)
             title = decision.get('title') or meta.get('title') or meta.get('paper_title') or (heading[1] if heading else None) or meta.get('citekey') or path.stem
-            if meta.get('publication_authorized') is False:
-                title = meta.get('paper_title') or doi or '文献记录'
+            if restricted:
+                title = decision.get('title') or meta.get('paper_title') or doi or '文献记录'
             meta = {**meta, 'title':plain_title(title), '_citation_only':True}
             body = '这条记录收录原论文的书目信息，不转载研读笔记及图版。' if part!='inbox' else '这篇文献已收录，主题归类待整理。'
         if UNSAFE.search(body):

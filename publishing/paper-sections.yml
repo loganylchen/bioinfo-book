@@ -31,3 +31,16 @@
 10.1093/bib/bbag552: {part: genetics, text: true}
 10.1093/bib/bbag562: {part: models}
 10.1016/j.isci.2026.117596: {part: reads}
+10.1038/s41591-026-04721-y: {part: atlas, title: 从单核 RNA 图谱看不同年龄的结直肠癌}
+10.1038/s41431-026-02125-7: {part: genetics, title: 泛基因组与端粒到端粒参考基因组在罕见病研究中的作用}
+10.1038/s41588-026-02781-x: {part: atlas, title: 用单细胞 RNA 与 T 细胞受体测序研究 T 细胞动态}
+10.1016/j.molcel.2026.01.006: {part: regulation, title: U1 接力模型如何解释 mRNA 成熟}
+10.1038/s41598-026-76388-x: {part: regulation, title: PANC-1 细胞中的染色质相关 miRNA}
+10.1038/s44161-026-00898-0: {part: regulation, title: 心衰中的 m6A 修饰与 SYNPO2L 转录本}
+10.1042/bst20250199: {part: regulation, title: 转录凝聚体与基因表达调控}
+10.1038/s41467-026-77136-5: {part: regulation, title: microRNA-200 如何影响皮脂腺的细胞命运}
+10.1042/bcj20260179: {part: models, title: 蛋白质科学中的图表示}
+10.1042/bcj20260251: {part: models, title: 用粗粒化模型研究核酸凝聚}
+10.1093/nar/gkag990: {part: regulation, title: 反义寡核苷酸与 RNA 外切体功能}
+10.1038/s41467-026-78563-0: {part: reads, title: 用纳米孔测序定量细胞 tRNA}
+10.1038/s41467-026-79336-5: {part: reads, title: UMIche 如何评估分子计数的准确性}
