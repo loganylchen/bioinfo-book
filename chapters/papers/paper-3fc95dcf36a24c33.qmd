@@ -1,0 +1,7 @@
+# Revisiting genome-guided RNA localization in bacteria
+
+::: {.book-source}
+论文：[DOI 10.1038/s41467-026-78703-6](https://doi.org/10.1038/s41467-026-78703-6)。
+:::
+
+这条记录收录原论文的书目信息，不转载研读笔记及图版。

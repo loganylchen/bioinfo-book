@@ -36,7 +36,7 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /Statistics/
-            /References/公众号解读/
+            /References/
       - name: Build publication tree
         if: github.event_name != 'push'
         run: |

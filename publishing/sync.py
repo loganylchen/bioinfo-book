@@ -13,7 +13,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 STATS = Path('Statistics')
-PAPERS = Path('References/公众号解读')
+PAPERS = Path('References')
+ESSAYS = PAPERS/'公众号解读'
+DOI = re.compile(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+', re.I)
 PRIVATE = re.compile(r'仅供私人|仅限私人|私人审读归档|仅供内部|不得公开|禁止公开|private[-_ ](?:only|study|reading)', re.I)
 UNSAFE = re.compile(r'(?i)(?:\b(?:Daily|Projects)/|(?:/home/|/Users/|/mnt/|/Volumes/)|file://|obsidian://|<\s*(?:script|iframe|object|embed)\b|\{\{<|^```\{|BEGIN [A-Z ]*PRIVATE KEY)', re.M)
 WIKI = re.compile(r'(!?)\[\[([^\]\n]+)\]\]')
@@ -39,55 +41,90 @@ def under(path, root):
     return path.resolve().is_relative_to(root.resolve())
 
 
-def section_for(meta):
-    if meta.get('book_part'):
-        return meta['book_part']
-    labels = ' '.join(str(meta.get(field, '')) for field in ('tags', 'title')).lower()
-    for name, terms in [('reads', ('long-read','nanopore','转录本','读段','异构体')), ('atlas', ('spatial','single-cell','空间','单细胞')), ('genetics', ('qtl','gwas','人群遗传','疾病图谱'))]:
-        if any(term in labels for term in terms):
-            return name
-    return None
+def paper_doi(meta):
+    value = re.sub(r'^(?:https?://(?:dx\.)?doi\.org/|doi:\s*)', '', str(meta.get('doi') or '').strip(), flags=re.I)
+    return value.lower() if DOI.fullmatch(value) else ''
+
+
+def paper_metadata(meta, body):
+    if not paper_doi(meta):
+        opening = '\n'.join(body.splitlines()[:16])
+        match = re.search(r'(?:doi:\s*|https?://(?:dx\.)?doi\.org/)(10\.\d{4,9}/[-._;/:a-zA-Z0-9]+)', opening, re.I)
+        if match:
+            meta = {**meta, 'doi':match[1].rstrip('.,;:')}
+    return meta
+
+
+def plain_title(value):
+    value = ' '.join(str(value).split())[:320]
+    if UNSAFE.search(value) or re.search(r'[<>`{}\[\]\\]|(?:https?|file):', value, re.I):
+        return '文献记录'
+    return value
 
 
 def catalog(vault, sections):
     reviewed = {}
+    decisions = load(ROOT/'publishing/paper-sections.yml')
     for part, entries in load(ROOT/'publishing/selection.yml').items():
         for source, slug in entries:
-            relative = Path(source) if source.startswith('Statistics/') else PAPERS/(source+'.md')
+            relative = Path(source) if source.startswith('Statistics/') else ESSAYS/(source+'.md')
             reviewed[relative] = (part, slug)
     candidates = set()
     for area in [STATS, PAPERS]:
         root = vault/area
         if not root.is_dir() or not under(root, vault) or root.is_symlink():
             raise ValueError('Source checkout is incomplete')
-        candidates.update(path.relative_to(vault) for path in root.rglob('*.md') if 'assets' not in path.relative_to(root).parts and path.stem not in {'index','README'})
-    entries, slugs = [], set()
-    for relative in [*reviewed, *sorted(candidates - reviewed.keys())]:
+        candidates.update(path.relative_to(vault) for path in root.rglob('*.md') if not any(piece.startswith('.') or piece.lower() in {'assets','daily','projects','templates'} for piece in path.relative_to(root).parts) and path.stem.lower() not in {'index','readme','inbox'})
+    entries, slugs, dois = [], set(), set()
+    for relative in [*reviewed, *sorted(candidates - reviewed.keys(), key=lambda path: (not path.is_relative_to(ESSAYS),path))]:
         if relative not in candidates:
             continue
         path = vault/relative
         if path.resolve() != path.absolute():
             raise ValueError('Symlink is not a publication source')
-        if relative not in reviewed and not re.search(r'(?m)^book_publish:\s*true\s*$', path.read_text(encoding='utf-8-sig').split('\n---\n', 1)[0]):
-            continue
         meta, body = read_note(path)
-        if meta.get('book_publish') is False or meta.get('draft') is True or PRIVATE.search(str(meta.get('status',''))+'\n'+body):
+        scope = ' '.join(str(meta.get(key,'')) for key in ('status','archive_scope','visibility'))
+        if meta.get('book_publish') is False or meta.get('draft') is True or meta.get('private') is True or re.search(r'\bprivate\b',scope,re.I) or str(meta.get('status','')).lower() == 'draft' or PRIVATE.search(scope+'\n'+body):
             continue
+        paper = relative.is_relative_to(PAPERS)
+        if paper:
+            meta = paper_metadata(meta, body)
+        doi = paper_doi(meta) if paper else ''
+        if doi and doi in dois:
+            continue
+        key = doi or str(meta.get('citekey') or relative.as_posix())
+        decision = decisions.get(key, {})
+        card = False
         if relative in reviewed:
             part, slug = reviewed[relative]
+            folder = part
+        elif paper:
+            if not (doi or meta.get('category') in {'literaturenote','literature-interpretation'} or any(meta.get(field) for field in ('citekey','paper_title','pmid')) or relative.is_relative_to(ESSAYS)):
+                continue
+            part = meta.get('book_part') or decision.get('part','inbox')
+            slug = 'paper-'+hashlib.sha256(key.encode()).hexdigest()[:16]
+            folder = 'papers'
+            card = not (decision.get('text') and relative.is_relative_to(ESSAYS))
         else:
             if meta.get('book_publish') is not True:
                 continue
-            part = 'methods' if relative.is_relative_to(STATS) else section_for(meta)
+            part = folder = 'methods'
             slug = meta.get('book_slug') or path.stem
-            if part not in sections or not SLUG.fullmatch(str(slug)):
-                continue
         if part not in sections or not SLUG.fullmatch(slug) or slug in slugs:
             raise ValueError('Invalid or duplicate publication identifier')
+        if paper and (card or meta.get('publication_authorized') is False):
+            heading = re.search(r'(?m)^# (.+)$',body)
+            title = decision.get('title') or meta.get('title') or meta.get('paper_title') or (heading[1] if heading else None) or meta.get('citekey') or path.stem
+            if meta.get('publication_authorized') is False:
+                title = meta.get('paper_title') or doi or '文献记录'
+            meta = {**meta, 'title':plain_title(title), '_citation_only':True}
+            body = '这条记录收录原论文的书目信息，不转载研读笔记及图版。' if part!='inbox' else '这篇文献已收录，主题归类待整理。'
         if UNSAFE.search(body):
             raise ValueError('Publication guard stopped a note; inspect the source privately')
         slugs.add(slug)
-        entries.append((part, slug, path, meta, body))
+        if doi:
+            dois.add(doi)
+        entries.append((part, slug, path, meta, body, Path('chapters')/folder/(slug+'.qmd')))
     return entries
 
 
@@ -95,16 +132,17 @@ def export(vault, destination):
     sections = load(ROOT/'publishing/sections.yml')
     attachments = load(ROOT/'publishing/attachments.yml')
     entries = catalog(vault, sections)
-    links = {path.stem: Path('chapters')/part/(slug+'.qmd') for part,slug,path,*_ in entries}
+    links = {}
+    for _, _, path, _, _, target in entries:
+        links[path.stem] = None if path.stem in links else target
     config = load(ROOT/'publishing/base.yml')
     chapters = ['index.qmd']
     count = 0
     for part, part_title in sections.items():
         pages = []
-        for entry_part, slug, path, meta, body in entries:
+        for entry_part, slug, path, meta, body, target in entries:
             if part != entry_part:
                 continue
-            target = links[path.stem]
             out = destination/target
             out.parent.mkdir(parents=True, exist_ok=True)
             figures = {}
@@ -146,23 +184,34 @@ def export(vault, destination):
                 embedded, value = match.groups()
                 source, sep, alias = value.partition('|')
                 note, _, anchor = source.partition('#')
-                if embedded or note not in links:
+                if embedded or not links.get(note):
                     raise ValueError(f'Unapproved internal reference in {slug}')
                 ref = os.path.relpath(links[note], target.parent)
                 return f'[{alias if sep else note}]({ref}'+(f'#{anchor}' if anchor else '')+')'
 
             body = WIKI.sub(wiki, IMAGE.sub(image,body))
+            body = re.sub(r'(?<!!)\[([^\]\n]+)\]\('+re.escape(f'assets/{directory}/scientific-provenance.json')+r'\)',r'\1（内部核验记录，不随书附送）',body)
+            def plate_link(match):
+                label, raw = match.groups()
+                rel = attachment(raw,{'.png','.jpg','.jpeg','.webp'})
+                figures[rel] = True
+                return f'[{label}]({rel.as_posix()})'
+
+            body = re.sub(r'(?<!!)\[([^\]\n]+)\]\((assets/[^()\n]+\.(?:png|jpe?g|webp))\)',plate_link,body,flags=re.I)
             body = re.sub(r'(?<!!)\[([^\]\n]+)\]\((assets/[^()\n]+\.py)\)',example,body)
             def note_link(match):
                 name, anchor = unquote(match[1]), match[2] or ''
-                if name not in links:
+                if not links.get(name):
                     raise ValueError(f'Unapproved linked note in {slug}')
                 return ']('+os.path.relpath(links[name],target.parent)+anchor+')'
 
             body = re.sub(r'\]\(([^:/()#]+)\.md(#[^()]*)?\)',note_link,body)
             if '![' in re.sub(IMAGE, '', body) or re.search(r'<(?:img|a)\s[^>]*(?:href|src)\s*=',body,re.I):
                 raise ValueError(f'Unresolved embed in {slug}')
-            if re.search(r'\]\((?!(?:https?://|mailto:|#|[\w./-]+\.qmd(?:#|\))))',IMAGE.sub('',body)):
+            remaining = IMAGE.sub('',body)
+            for rel in figures:
+                remaining = remaining.replace(']('+rel.as_posix()+')','](#)')
+            if re.search(r'\]\((?!(?:https?://|mailto:|#|[\w./-]+\.qmd(?:#|\))))',remaining):
                 raise ValueError(f'Unapproved local link in {slug}')
             heading = re.search(r'^# (.+)$', body, re.M)
             title = str(meta.get('title') or (heading[1] if heading else path.stem))
@@ -176,10 +225,11 @@ def export(vault, destination):
                 body = re.sub(r'(?m)^(做空间转录组时[^\n]+)$', r'\1\n\n![同一组 RNA，两种细胞边界](../../boundaries.svg)\n\n编者示意｜两幅图里的点没有动。只把分界线向右移，十字标记的 RNA 就换了归属。非实验数据。', body, count=1)
             intro = ''
             if path.is_relative_to(vault/PAPERS):
-                doi = str(meta.get('doi',''))
-                if not re.fullmatch(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+',doi):
-                    raise ValueError(f'Missing or invalid DOI in {slug}')
-                intro = f'::: {{.book-source}}\n论文：[DOI {doi}](https://doi.org/{doi})。原有图注和许可说明见正文；未明确许可的图版标记为**授权待确认**。\n:::\n\n'
+                doi = paper_doi(meta)
+                citation = f'论文：[DOI {doi}](https://doi.org/{doi})。' if doi else '原笔记尚未记录 DOI。'
+                if not meta.get('_citation_only'):
+                    citation += '原有图注和许可说明见正文；未明确许可的图版标记为**授权待确认**。'
+                intro = f'::: {{.book-source}}\n{citation}\n:::\n\n'
             for rel, anchor in examples.items():
                 program = (out.parent/rel).read_text(encoding='utf-8').rstrip()
                 source_url = config['book']['repo-url']+'/blob/main/'+(target.parent/rel).as_posix()
@@ -192,6 +242,11 @@ def export(vault, destination):
     config['book']['chapters'] = [*chapters,'rights.qmd']
     (destination/'_quarto.yml').write_text(yaml.safe_dump(config,allow_unicode=True,sort_keys=False),encoding='utf-8')
     print(f'Publication: {len(entries)} chapters; {count} referenced images.')
+    pending = sum(row[0]=='inbox' for row in entries)
+    print(f'New literature awaiting classification: {pending}.')
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
+            print(f'待归类文献：{pending} 篇。',file=summary)
 
 
 if __name__=='__main__':

@@ -37,6 +37,9 @@ book:
     - chapters/reads/nano-id.qmd
     - chapters/reads/nmd.qmd
     - chapters/reads/rna-in-space-and-time.qmd
+    - chapters/papers/paper-81bffd8a207565e1.qmd
+    - chapters/papers/paper-a42e5cb3902b7103.qmd
+    - chapters/papers/paper-a47c165ab09728e1.qmd
   - part: 单细胞与空间图谱
     chapters:
     - chapters/atlas/protocol-bias.qmd
@@ -46,6 +49,12 @@ book:
     - chapters/atlas/image-profiling.qmd
     - chapters/atlas/single-cell-imputation.qmd
     - chapters/atlas/adipose-atlas.qmd
+    - chapters/papers/paper-1a4a1ad74809d2c3.qmd
+    - chapters/papers/paper-ac079d3dee1f6ece.qmd
+    - chapters/papers/paper-bd49b200125ca9ed.qmd
+    - chapters/papers/paper-9da22a1f0b36a53f.qmd
+    - chapters/papers/paper-acf1773b998314be.qmd
+    - chapters/papers/paper-fb096a57fdbfc31d.qmd
   - part: 人群遗传与疾病证据
     chapters:
     - chapters/genetics/blood-atlas.qmd
@@ -53,6 +62,34 @@ book:
     - chapters/genetics/cell-abundance-qtl.qmd
     - chapters/genetics/twas-directions.qmd
     - chapters/genetics/pdac-alternative-splicing.qmd
+    - chapters/papers/paper-7af2e13d08808af0.qmd
+    - chapters/papers/paper-76699ca4932ca598.qmd
+    - chapters/papers/paper-d56cc39380e3cf20.qmd
+    - chapters/papers/paper-f6116eda98561ee8.qmd
+    - chapters/papers/paper-c687ff60bf22e905.qmd
+    - chapters/papers/paper-3d5e284b040a53c9.qmd
+    - chapters/papers/paper-0996ad822921db9c.qmd
+  - part: RNA 与基因调控
+    chapters:
+    - chapters/papers/paper-e283c741d5fa2c38.qmd
+    - chapters/papers/paper-9e1ae273518c4703.qmd
+    - chapters/papers/paper-a33f9f1f51be58ff.qmd
+    - chapters/papers/paper-3fc95dcf36a24c33.qmd
+    - chapters/papers/paper-21628506bb167a29.qmd
+    - chapters/papers/paper-8434ad3138c0dffe.qmd
+    - chapters/papers/paper-ddd5e93ccd5dd931.qmd
+    - chapters/papers/paper-d5fc0a9f6e035cbd.qmd
+  - part: 计算模型与结构预测
+    chapters:
+    - chapters/papers/paper-eaf06a64f43b327a.qmd
+    - chapters/papers/paper-5e66cd2d8c824549.qmd
+    - chapters/papers/paper-4239a7e584c2aea8.qmd
+    - chapters/papers/paper-15ed3b5f6640853d.qmd
+    - chapters/papers/paper-82811239b26d61a2.qmd
+    - chapters/papers/paper-3bc6d885aa503ec9.qmd
+    - chapters/papers/paper-4273f8d320e0dca7.qmd
+    - chapters/papers/paper-8a6bdd04090e2191.qmd
+    - chapters/papers/paper-bc01d18e026b4e16.qmd
   - rights.qmd
 execute:
   enabled: false
