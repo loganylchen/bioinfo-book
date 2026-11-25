@@ -1,0 +1,7 @@
+Statistics/DeLong's test for AUC.md:
+  directory: delong-auc
+  files:
+    01-roc.svg: 48af1bff9e5c87f65c616fd0e954c502fb48398518f30d99fb1c245bfacc8475
+    02-pairwise.svg: 398767737db1e30a73033ceece8e0b00304f68478568b73d25b63971995dd696
+    03-difference.svg: 539de5c8145c33a66f1fa39b6da015f603a90d59c74e45e8ae8b907009fff8aa
+    delong_example.py: d5dbe270f63363ae36792e425b9acd5bd3dd3f09f01d1efcda821fee254cfc97

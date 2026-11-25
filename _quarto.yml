@@ -52,6 +52,7 @@ book:
     - chapters/genetics/cell-specific-variants.qmd
     - chapters/genetics/cell-abundance-qtl.qmd
     - chapters/genetics/twas-directions.qmd
+    - chapters/genetics/pdac-alternative-splicing.qmd
   - rights.qmd
 execute:
   enabled: false

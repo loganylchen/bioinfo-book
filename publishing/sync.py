@@ -1,4 +1,5 @@
 """Export selected Markdown and its referenced images; never mirror the source tree."""
+import hashlib
 import os
 import re
 import shutil
@@ -92,6 +93,7 @@ def catalog(vault, sections):
 
 def export(vault, destination):
     sections = load(ROOT/'publishing/sections.yml')
+    attachments = load(ROOT/'publishing/attachments.yml')
     entries = catalog(vault, sections)
     links = {path.stem: Path('chapters')/part/(slug+'.qmd') for part,slug,path,*_ in entries}
     config = load(ROOT/'publishing/base.yml')
@@ -106,20 +108,39 @@ def export(vault, destination):
             out = destination/target
             out.parent.mkdir(parents=True, exist_ok=True)
             figures = {}
+            examples = {}
+            approval = attachments.get(path.relative_to(vault).as_posix(), {})
+            directory = approval.get('directory', path.stem)
+            if Path(directory).name != directory or directory in {'', '.', '..'}:
+                raise ValueError(f'Invalid attachment directory in {slug}')
+            expected = path.parent/'assets'/directory
 
-            def image(match):
-                label, raw = match.groups()
+            def attachment(raw, allowed):
                 raw = unquote(raw.strip().strip('<>'))
                 source = path.parent/raw
-                expected = path.parent/'assets'/path.stem
-                if Path(raw).is_absolute() or '..' in Path(raw).parts or source.resolve() != source.absolute() or not under(source,expected) or not source.is_file() or source.suffix.lower() not in {'.png','.jpg','.jpeg','.webp'}:
-                    raise ValueError(f'Unapproved figure reference in {slug}')
-                rel = Path('assets')/slug/source.relative_to(expected)
+                if Path(raw).is_absolute() or '..' in Path(raw).parts or source.resolve() != source.absolute() or not under(source,expected) or not source.is_file() or source.suffix.lower() not in allowed:
+                    raise ValueError(f'Unapproved attachment reference in {slug}')
+                name = source.relative_to(expected)
+                if source.suffix.lower() in {'.svg','.py'} and hashlib.sha256(source.read_bytes()).hexdigest() != approval.get('files',{}).get(name.as_posix()):
+                    raise ValueError(f'Attachment requires review in {slug}')
+                rel = Path('assets')/slug/name
                 dest = out.parent/rel
                 dest.parent.mkdir(parents=True,exist_ok=True)
                 shutil.copyfile(source,dest)
+                return rel
+
+            def image(match):
+                label, raw = match.groups()
+                rel = attachment(raw,{'.png','.jpg','.jpeg','.webp','.svg'})
                 figures[rel] = True
                 return f'![{label}]({rel.as_posix()})'
+
+            def example(match):
+                label, raw = match.groups()
+                rel = attachment(raw,{'.py'})
+                anchor = slug+'-example-'+hashlib.sha256(rel.as_posix().encode()).hexdigest()[:8]
+                examples[rel] = anchor
+                return f'[{label}](#{anchor})'
 
             def wiki(match):
                 embedded, value = match.groups()
@@ -131,6 +152,7 @@ def export(vault, destination):
                 return f'[{alias if sep else note}]({ref}'+(f'#{anchor}' if anchor else '')+')'
 
             body = WIKI.sub(wiki, IMAGE.sub(image,body))
+            body = re.sub(r'(?<!!)\[([^\]\n]+)\]\((assets/[^()\n]+\.py)\)',example,body)
             def note_link(match):
                 name, anchor = unquote(match[1]), match[2] or ''
                 if name not in links:
@@ -158,6 +180,10 @@ def export(vault, destination):
                 if not re.fullmatch(r'10\.\d{4,9}/[-._;()/:a-zA-Z0-9]+',doi):
                     raise ValueError(f'Missing or invalid DOI in {slug}')
                 intro = f'::: {{.book-source}}\n论文：[DOI {doi}](https://doi.org/{doi})。原有图注和许可说明见正文；未明确许可的图版标记为**授权待确认**。\n:::\n\n'
+            for rel, anchor in examples.items():
+                program = (out.parent/rel).read_text(encoding='utf-8').rstrip()
+                source_url = config['book']['repo-url']+'/blob/main/'+(target.parent/rel).as_posix()
+                body += f'\n\n## 配套 Python 示例 {{#{anchor}}}\n\n[查看或下载 `{rel.name}`]({source_url})\n\n```python\n{program}\n```\n'
             out.write_text(f'# {title}\n\n'+intro+body.strip()+'\n',encoding='utf-8')
             pages.append(target.as_posix())
             count += len(figures)

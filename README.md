@@ -8,6 +8,8 @@
 
 ## 更新与选稿
 
+图稿通常放在原笔记旁的 `assets/<笔记名>/`。独立附件目录与已审读的 SVG、Python 示例在 `publishing/attachments.yml` 中逐文件登记；内容变化须重新核对摘要。示例以代码文本进入网页和 EPUB，不在构建时执行。
+
 - 每天香港时间 **07:17** 定时检查（GitHub 调度可能延后）。只取 `Statistics/` 和 `References/公众号解读/`；`Daily/`、`Projects/` 和其他目录均不作为内容或附件来源。没有出版变化就不产生提交。可在 Actions 手动运行 **Build and publish book**。
 - 首版选稿和固定网址在 `publishing/selection.yml`，主题和篇序在 `publishing/sections.yml`。已有选稿随源文和引用图片更新；删除源文或加 `book_publish: false` 后从当前书站撤下。研究方案会保留原文的待验证说明。
 - 新稿公开前，在原 Markdown 的 YAML 头加 `book_publish: true`。可指定 `book_part`（`methods`、`reads`、`atlas`、`genetics`）和 `book_slug`（小写英文和连字符）。统计稿归方法篇；解读稿未指定分篇时按标题和标签归类；不能确定归类或生成稳定网址的，不自动发布。明确标记私人研读、`draft: true` 的稿件不收。公共书仓的发布分支限可信维护者修改，未配置任何 PR 触发的私库访问工作流。
