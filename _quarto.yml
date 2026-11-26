@@ -85,9 +85,11 @@ book:
     - chapters/papers/paper-3fc95dcf36a24c33.qmd
     - chapters/papers/paper-21628506bb167a29.qmd
     - chapters/papers/paper-6d69310a0a0a3435.qmd
+    - chapters/papers/paper-8ae96493ef9c499c.qmd
     - chapters/papers/paper-6eccc006460aa914.qmd
     - chapters/papers/paper-0308d1c13beffae6.qmd
     - chapters/papers/paper-8434ad3138c0dffe.qmd
+    - chapters/papers/paper-44f5a124c18e6bfd.qmd
     - chapters/papers/paper-ddd5e93ccd5dd931.qmd
     - chapters/papers/paper-d5fc0a9f6e035cbd.qmd
   - part: 计算模型与结构预测
