@@ -105,6 +105,9 @@ book:
     - chapters/papers/paper-4273f8d320e0dca7.qmd
     - chapters/papers/paper-8a6bdd04090e2191.qmd
     - chapters/papers/paper-bc01d18e026b4e16.qmd
+  - part: 未分类
+    chapters:
+    - chapters/papers/unclassified.qmd
   - rights.qmd
 execute:
   enabled: false

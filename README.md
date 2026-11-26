@@ -12,7 +12,8 @@
 
 - 每天香港时间 **07:17**（调度可能延后），从源库 `main` 检查 `References/` 和 `Statistics/`。`Daily/`、`Projects/` 不收。也可在 Actions 手动运行 **Build and publish book**。没有出版变化就不产生提交。
 - **文献默认收录，无需 `book_publish: true`。** `References/公众号解读/` 中的文章、`References/` 底下带文献类别、DOI、PMID、论文标题或 citekey 的笔记都能识别；普通 Markdown 也可在开头用 `doi:` 或 DOI 链接。跳过目录、收件箱、附件和模板。「私人研读」「仅供私人学习」及 `archive_scope` 中的私人归档说明不影响文献收录。要连书目也不公开，请设 `book_publish: false`；草稿（`draft: true` 或 `status: draft`）以及 `private: true`、`visibility: private` 仍跳过。
-- **分类独立于收录。** 新文献先以题名和已有 DOI 进入「新收文献 · 待归类」。编辑只对新增文献按核心研究问题分篇，在 `publishing/paper-sections.yml` 中登记 DOI（没有则用 citekey 或源相对路径）及 `part`。已有归类不重算，不调用 Copilot 或其他模型；也可以用 `book_part` 给新条目指定篇。新条目的网址不依赖分篇；同 DOI 优先保留首版、其次是专题解读。仅审读过的专题解读登记 `text: true` 后同步全文与图版；个人研读笔记只取书目信息，不拷贝批注、项目链接或附件。
+- **先收录，再归类。** 把文稿推送到 vault 的 `main` 分支即可。下次定时同步时，未指定有效分篇的新文献以题名和已有 DOI 进入[未分类](https://loganylchen.github.io/bioinfo-book/chapters/papers/unclassified.html)，自动发布到网页与 EPUB。这个入口始终可见，无需人值守或调用 AI。个人研读笔记不拷贝批注、项目链接或附件；审读过的专题解读在 `publishing/paper-sections.yml` 中登记 `text: true` 就能同步全文与图版，不必同时指定分篇。
+- 要整理目录时，再在同一文件按 DOI（没有则用 citekey 或源相对路径）填写 `part`；也可在源稿中给新条目指定 `book_part`。归类后条目会移出「未分类」，网址不变。同 DOI 优先保留首版、其次是专题解读。
 - 首版固定网址在 `publishing/selection.yml`，篇序在 `publishing/sections.yml`。非文献的统计稿仍采用原有选稿或 `book_publish: true` 机制。删除源文后，独有条目随下次同步撤下。公共书仓未配置 PR 触发的私库访问流程。
 - 选稿保留 DOI、图注、已记载的授权信息。许可尚未明确的图版标记为**授权待确认**，由书主跟进。`publication_authorized: false` 或注明不得公开转载的文献只收书目信息，不转载正文与图版。常规撤稿不等于清除 Git 历史。
 - 改原稿请在源库修改，否则下次同步会覆盖导出版。改主题、排版、目录、选稿规则请在本仓库修改。同步脚本需 Python 3.10+ 和 PyYAML，构建已提交的书稿不需要它们。

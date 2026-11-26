@@ -104,7 +104,8 @@ def catalog(vault, sections):
         elif paper:
             if not (doi or meta.get('category') in {'literaturenote','literature-interpretation'} or any(meta.get(field) for field in ('citekey','paper_title','pmid')) or relative.is_relative_to(ESSAYS)):
                 continue
-            part = meta.get('book_part') or decision.get('part','inbox')
+            requested_part = meta.get('book_part') or decision.get('part')
+            part = requested_part if isinstance(requested_part,str) and requested_part in sections else 'inbox'
             slug = 'paper-'+hashlib.sha256(key.encode()).hexdigest()[:16]
             folder = 'papers'
             card = not (decision.get('text') and relative.is_relative_to(ESSAYS))
@@ -144,6 +145,7 @@ def export(vault, destination):
     count = 0
     for part, part_title in sections.items():
         pages = []
+        inbox_links = []
         for entry_part, slug, path, meta, body, target in entries:
             if part != entry_part:
                 continue
@@ -240,7 +242,15 @@ def export(vault, destination):
                 body += f'\n\n## 配套 Python 示例 {{#{anchor}}}\n\n[查看或下载 `{rel.name}`]({source_url})\n\n```python\n{program}\n```\n'
             out.write_text(f'# {title}\n\n'+intro+body.strip()+'\n',encoding='utf-8')
             pages.append(target.as_posix())
+            if part == 'inbox':
+                inbox_links.append(f'- [{plain_title(title)}]({target.name})')
             count += len(figures)
+        if part == 'inbox':
+            landing = Path('chapters/papers/unclassified.qmd')
+            (destination/landing).parent.mkdir(parents=True,exist_ok=True)
+            listing = '\n'.join(inbox_links) or '目前没有未分类文献。'
+            (destination/landing).write_text('# 未分类文献 {.unnumbered}\n\n新收录、尚未分篇的文献列在这里。归类后，原来的文章链接仍然有效。\n\n'+listing+'\n',encoding='utf-8')
+            pages.insert(0,landing.as_posix())
         if pages:
             chapters.append({'part':part_title,'chapters':pages})
     config['book']['chapters'] = [*chapters,'rights.qmd']
